@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  privacy-summarizer:
+    platform: linux/amd64
+    build:
+      context: .
+      platforms:
+        - linux/amd64
+    container_name: privacy-summarizer-daemon
+    restart: unless-stopped
+    command: python -m src.main daemon
+
+    # Windows doesn't support host network mode - use default bridge network
+    # Ollama is remote on thrilltop.mesh.thrill.host so no need for host network
+
+    volumes:
+      # Persistent data storage
+      - ./data:/data
+      - ./signal-cli-config:/signal-cli-config
+      - ./config:/app/config:ro
+
+    environment:
+      # Ollama configuration (remote on thrilltop via Tailscale)
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://thrilltop.mesh.thrill.host:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral-nemo}
+
+      # Database configuration
+      - DB_PATH=/data/privacy_summarizer.db
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}  # REQUIRED for Privacy Summarizer
+
+      # Signal-CLI configuration
+      - SIGNAL_CLI_CONFIG_DIR=/signal-cli-config
+      - SIGNAL_PHONE_NUMBER=${SIGNAL_PHONE_NUMBER}
+
+      # Scheduler configuration
+      - ENABLE_SCHEDULER=${ENABLE_SCHEDULER:-true}
+
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+
+    env_file:
+      - .env
+
+    stdin_open: true
+    tty: true

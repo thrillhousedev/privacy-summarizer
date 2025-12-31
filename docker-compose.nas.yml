@@ -1,0 +1,103 @@
+version: '3.8'
+
+# NAS deployment configuration for Privacy Summarizer
+# Optimized for always-on, low-power NAS devices
+
+services:
+  # Main service - handles message collection and scheduled summaries
+  privacy-summarizer:
+    platform: linux/amd64
+    build:
+      context: .
+      platforms:
+        - linux/amd64
+    container_name: privacy-summarizer-daemon
+    restart: unless-stopped
+    command: python -m src.main daemon
+
+    # NAS (Linux) supports host network if Ollama runs locally
+    # Remove network_mode if using remote Ollama
+    # network_mode: host
+
+    volumes:
+      # Persistent data storage
+      - ./data:/data
+      - ./signal-cli-config:/signal-cli-config
+      - ./config:/app/config:ro
+
+    environment:
+      # Ollama configuration
+      # If running Ollama on NAS: http://localhost:11434
+      # If using remote Ollama: http://thrilltop.mesh.thrill.host:11434
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://thrilltop.mesh.thrill.host:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral-nemo}
+
+      # Database configuration
+      - DB_PATH=/data/privacy_summarizer.db
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}  # REQUIRED for Privacy Summarizer
+
+      # Signal-CLI configuration
+      - SIGNAL_CLI_CONFIG_DIR=/signal-cli-config
+      - SIGNAL_PHONE_NUMBER=${SIGNAL_PHONE_NUMBER}
+
+      # Scheduler configuration
+      - ENABLE_SCHEDULER=${ENABLE_SCHEDULER:-true}
+
+      # Message collection settings
+      - MESSAGE_COLLECTION_INTERVAL_MINUTES=${MESSAGE_COLLECTION_INTERVAL_MINUTES:-15}
+      - PURGE_INTERVAL_HOURS=${PURGE_INTERVAL_HOURS:-1}
+      - DEFAULT_MESSAGE_RETENTION_HOURS=${DEFAULT_MESSAGE_RETENTION_HOURS:-48}
+      - DEFAULT_SUMMARY_RETENTION_HOURS=${DEFAULT_SUMMARY_RETENTION_HOURS:-168}
+
+      # Timezone configuration
+      - TIMEZONE=${TIMEZONE:-UTC}
+
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+
+    env_file:
+      - .env
+
+    stdin_open: true
+    tty: true
+
+  # Optional API service - REST API for schedule management
+  # Enable with: docker-compose -f docker-compose.nas.yml --profile api up -d
+  api:
+    platform: linux/amd64
+    build:
+      context: .
+      platforms:
+        - linux/amd64
+    container_name: privacy-summarizer-api
+    restart: unless-stopped
+    command: python -m src.main api --host 0.0.0.0 --port 8000
+    profiles:
+      - api
+      - full
+
+    ports:
+      - "${API_PORT:-8000}:8000"
+
+    volumes:
+      - ./data:/data
+      - ./signal-cli-config:/signal-cli-config
+      - ./config:/app/config:ro
+
+    environment:
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://thrilltop.mesh.thrill.host:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral-nemo}
+      - DB_PATH=/data/privacy_summarizer.db
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - SIGNAL_CLI_CONFIG_DIR=/signal-cli-config
+      - SIGNAL_PHONE_NUMBER=${SIGNAL_PHONE_NUMBER}
+      - API_SECRET=${API_SECRET}
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+
+    env_file:
+      - .env
+
+    depends_on:
+      - privacy-summarizer

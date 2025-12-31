@@ -1,0 +1,38 @@
+# Privacy Summarizer Configuration
+
+# Signal-CLI settings
+signal:
+  # Phone number is set via environment variable SIGNAL_PHONE_NUMBER
+  config_dir: /signal-cli-config
+
+# Database settings (encrypted with SQLCipher)
+database:
+  path: /data/privacy_summarizer.db
+
+# Ollama AI settings (local AI inference)
+# Note: OLLAMA_HOST env var overrides this setting
+ollama:
+  host: http://host.docker.internal:11434
+  model: dolphin-mistral:7b
+  temperature: 0.7
+
+# Scheduler settings (scheduled summaries only)
+scheduler:
+  # Enable automatic scheduled summaries
+  enabled: true
+
+# Analysis settings (privacy-focused summaries)
+analysis:
+  # Custom prompts for AI analysis (optional)
+  custom_prompts:
+    summary: null  # Use default privacy-focused prompt if null
+    topics: null
+    sentiment: null
+
+  # Maximum number of topics to extract per summary
+  max_topics: 5
+
+# Logging settings
+logging:
+  level: INFO  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

@@ -1,0 +1,1 @@
+"""Signal-CLI integration module."""

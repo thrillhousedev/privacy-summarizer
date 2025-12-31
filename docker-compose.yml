@@ -1,0 +1,55 @@
+services:
+  # Main service - handles real-time messages and scheduled summaries
+  # Uses signal-cli directly (no separate daemon needed)
+  privacy-summarizer:
+    platform: linux/amd64
+    build:
+      context: .
+      platforms:
+        - linux/amd64
+    container_name: privacy-summarizer-daemon
+    restart: unless-stopped
+    command: python -m src.main daemon
+
+    volumes:
+      # Persistent data storage
+      - ./data:/data
+      - ./signal-cli-config:/signal-cli-config
+      - ./config:/app/config:ro
+
+    # All environment variables come from .env file
+    # This prevents shell environment variables from overriding .env values
+    env_file:
+      - .env
+
+    stdin_open: true
+    tty: true
+
+  # Optional API service - REST API for schedule management
+  api:
+    platform: linux/amd64
+    build:
+      context: .
+      platforms:
+        - linux/amd64
+    container_name: privacy-summarizer-api
+    restart: unless-stopped
+    command: python -m src.main api --host 0.0.0.0 --port 8000
+    profiles:
+      - api
+      - full
+
+    ports:
+      - "8000:8000"
+
+    volumes:
+      - ./data:/data
+      - ./signal-cli-config:/signal-cli-config
+      - ./config:/app/config:ro
+
+    # All environment variables come from .env file
+    env_file:
+      - .env
+
+    depends_on:
+      - privacy-summarizer

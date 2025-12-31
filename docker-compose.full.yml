@@ -1,0 +1,104 @@
+# Full deployment with privacy-summarizer, API, and frontend
+# Usage: docker-compose -f docker-compose.full.yml up -d
+
+services:
+  # Main service - handles message collection and scheduled summaries
+  privacy-summarizer:
+    platform: linux/amd64
+    build:
+      context: .
+      platforms:
+        - linux/amd64
+    container_name: privacy-summarizer-daemon
+    restart: unless-stopped
+    command: python -m src.main daemon
+
+    networks:
+      - privacy-summarizer
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    volumes:
+      - ./data:/data
+      - ./signal-cli-config:/signal-cli-config
+      - ./config:/app/config:ro
+
+    env_file:
+      - .env
+
+    environment:
+      # These override .env only where container-specific paths are needed
+      - DB_PATH=/data/privacy_summarizer.db
+      - SIGNAL_CLI_CONFIG_DIR=/signal-cli-config
+
+    stdin_open: true
+    tty: true
+
+  # API service - REST API for schedule management
+  api:
+    platform: linux/amd64
+    build:
+      context: .
+      platforms:
+        - linux/amd64
+    container_name: privacy-summarizer-api
+    restart: unless-stopped
+    command: python -m src.main api --host 0.0.0.0 --port 8000
+
+    networks:
+      - privacy-summarizer
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    ports:
+      - "${API_PORT:-8000}:8000"
+
+    volumes:
+      - ./data:/data
+      - ./signal-cli-config:/signal-cli-config
+      - ./config:/app/config:ro
+
+    env_file:
+      - .env
+
+    environment:
+      # These override .env only where container-specific values are needed
+      - DB_PATH=/data/privacy_summarizer.db
+      - SIGNAL_CLI_CONFIG_DIR=/signal-cli-config
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+
+    depends_on:
+      - privacy-summarizer
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Frontend service - React UI for schedule management
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: privacy-summarizer-frontend
+    restart: unless-stopped
+
+    networks:
+      - privacy-summarizer
+
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+
+    environment:
+      - VITE_API_URL=http://localhost:${API_PORT:-8000}
+
+    depends_on:
+      - api
+
+networks:
+  privacy-summarizer:
+    driver: bridge
