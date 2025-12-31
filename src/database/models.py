@@ -130,9 +130,10 @@ class ScheduledSummary(Base):
 
 
 class SummaryRun(Base):
-    """Record of a summary execution - tracks what was summarized and allows resending.
+    """Record of a summary execution - tracks execution metadata for monitoring.
 
-    Summary text is stored temporarily with configurable retention for resend capability.
+    Summary text is NOT stored - summaries are generated, posted, and discarded.
+    Only execution metadata is retained for debugging and monitoring.
     """
 
     __tablename__ = "summary_runs"
@@ -145,9 +146,7 @@ class SummaryRun(Base):
     oldest_message_time = Column(DateTime, nullable=True)  # Time window start
     newest_message_time = Column(DateTime, nullable=True)  # Time window end
     status = Column(String(20), default="pending", nullable=False)  # pending, completed, failed
-    summary_text = Column(Text, nullable=True)  # Store for resend capability
     error_message = Column(Text, nullable=True)  # Error details if failed
-    retention_hours = Column(Integer, default=168, nullable=False)  # 7 days default for summary text
 
     # Relationships
     schedule = relationship("ScheduledSummary", back_populates="summary_runs")

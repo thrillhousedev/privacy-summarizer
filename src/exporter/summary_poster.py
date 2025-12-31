@@ -105,7 +105,6 @@ class SummaryPoster:
                     schedule.source_group.name,
                     period_description
                 )
-                summary_text = message_text
             else:
                 # Generate the privacy-focused summary
                 logger.info(f"Generating privacy summary for {len(messages_with_reactions)} messages (detail_mode={schedule.detail_mode})")
@@ -128,7 +127,6 @@ class SummaryPoster:
                     summary_data,
                     detail=detail_mode
                 )
-                summary_text = message_text
 
             # Post to the target group or print to console
             # Split long messages to fit within Signal's character limit
@@ -164,13 +162,12 @@ class SummaryPoster:
             oldest_time = start_time if messages_with_reactions else None
             newest_time = end_time if messages_with_reactions else None
 
-            # Mark summary run as completed
+            # Mark summary run as completed (no summary_text stored for privacy)
             self.db_repo.complete_summary_run(
                 run_id=summary_run.id,
                 message_count=len(messages_with_reactions),
                 oldest_message_time=oldest_time,
-                newest_message_time=newest_time,
-                summary_text=summary_text
+                newest_message_time=newest_time
             )
 
             # Purge messages if purge_on_summary is enabled for this group (skip in dry-run mode)
@@ -203,69 +200,6 @@ class SummaryPoster:
         except Exception as e:
             logger.error(f"Error generating/posting summary for schedule {schedule_id}: {e}", exc_info=True)
             self.db_repo.fail_summary_run(summary_run.id, str(e))
-            return False
-
-    def resend_summary(self, run_id: int, dry_run: bool = False) -> bool:
-        """Resend a previously generated summary.
-
-        Args:
-            run_id: Database ID of the summary run to resend
-            dry_run: If True, print to console instead of sending
-
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            # Get the summary run
-            runs = self.db_repo.get_recent_summary_runs(limit=100)
-            run = next((r for r in runs if r.id == run_id), None)
-
-            if not run:
-                logger.error(f"Summary run {run_id} not found")
-                return False
-
-            if not run.summary_text:
-                logger.error(f"Summary run {run_id} has no stored summary text")
-                return False
-
-            schedule = run.schedule
-            if not schedule:
-                logger.error(f"Schedule for run {run_id} not found")
-                return False
-
-            # Split long messages to fit within Signal's character limit
-            message_parts = split_long_message(run.summary_text)
-
-            if dry_run:
-                logger.info(f"DRY RUN: Would resend summary to '{schedule.target_group.name}' ({len(message_parts)} part(s))")
-                print("\n" + "="*80)
-                print(f"DRY RUN - Resending summary for '{schedule.name}'")
-                print("="*80)
-                for i, part in enumerate(message_parts):
-                    if len(message_parts) > 1:
-                        print(f"\n--- Part {i+1}/{len(message_parts)} ---")
-                    print(part)
-                print("="*80 + "\n")
-            else:
-                logger.info(f"Resending summary to '{schedule.target_group.name}' ({len(message_parts)} part(s))")
-                for part in message_parts:
-                    try:
-                        self.signal_cli.send_message(
-                            recipient=None,
-                            message=part,
-                            group_id=schedule.target_group.group_id
-                        )
-                    except Exception as e:
-                        logger.error(f"Failed to resend summary part to group: {e}")
-                    # Small delay between messages to maintain order
-                    if len(message_parts) > 1:
-                        time.sleep(0.5)
-                logger.info(f"Successfully resent summary for '{schedule.name}'")
-
-            return True
-
-        except Exception as e:
-            logger.error(f"Error resending summary run {run_id}: {e}", exc_info=True)
             return False
 
     def _get_top_emojis(self, emoji_counts: Dict[str, int], limit: int = 3) -> List[Dict[str, Any]]:

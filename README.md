@@ -11,7 +11,7 @@ Privacy Summarizer generates summaries of Signal group chats using a self-hosted
 - Reactions (for engagement metrics, purged with messages)
 - Group names and IDs
 - Schedule configurations
-- Summary text (for resend capability, purged after 7 days)
+- Summary run metadata (execution time, message count, status - NOT the summary text itself)
 
 **What NEVER gets stored:**
 - ❌ User names or profiles
@@ -313,12 +313,11 @@ docker-compose restart
    - Content sent to local Ollama model
    - Model explicitly instructed: NO names, NO direct quotes
    - Summary posted to target Signal group
-   - Summary text stored for resend capability
+   - Summary discarded after posting (not stored)
 
 3. **Automatic Purge** (hourly):
    - Messages older than retention period deleted (default 48 hours)
    - Each schedule can have its own retention period
-   - Summary runs purged after 7 days
 
 ### Summary Format
 
@@ -478,7 +477,7 @@ docker-compose logs -f
 | Group messages | 48 hours (default) | Yes, via `!retention` command or per schedule |
 | DM messages | 48 hours (default) | Yes, via `!retention` command or `DM_RETENTION_HOURS` |
 | Reactions | Same as messages | Yes |
-| Summary text | 7 days | Yes |
+| Summary text | Not stored | N/A |
 | Group metadata | Permanent | No |
 | Schedules | Permanent | No |
 

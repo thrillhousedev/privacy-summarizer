@@ -884,8 +884,7 @@ class DatabaseRepository:
         run_id: int,
         message_count: int,
         oldest_message_time: datetime,
-        newest_message_time: datetime,
-        summary_text: str
+        newest_message_time: datetime
     ) -> Optional[SummaryRun]:
         """Mark a summary run as completed with results.
 
@@ -894,7 +893,6 @@ class DatabaseRepository:
             message_count: Number of messages summarized
             oldest_message_time: Start of time window
             newest_message_time: End of time window
-            summary_text: Generated summary text
 
         Returns:
             Updated SummaryRun or None if not found
@@ -905,8 +903,7 @@ class DatabaseRepository:
             completed_at=datetime.utcnow(),
             message_count=message_count,
             oldest_message_time=oldest_message_time,
-            newest_message_time=newest_message_time,
-            summary_text=summary_text
+            newest_message_time=newest_message_time
         )
 
     def fail_summary_run(self, run_id: int, error_message: str) -> Optional[SummaryRun]:
@@ -958,31 +955,6 @@ class DatabaseRepository:
             return session.query(SummaryRun).options(
                 joinedload(SummaryRun.schedule)
             ).order_by(SummaryRun.started_at.desc()).limit(limit).all()
-
-    def purge_old_summary_runs(self) -> int:
-        """Purge summary runs that exceed their retention period.
-
-        Each SummaryRun has its own retention_hours field.
-
-        Returns:
-            Number of summary runs deleted
-        """
-        with self.get_session() as session:
-            now = datetime.utcnow()
-            # Find runs where completed_at + retention_hours < now
-            runs_to_delete = session.query(SummaryRun).filter(
-                SummaryRun.completed_at.isnot(None)
-            ).all()
-
-            count = 0
-            for run in runs_to_delete:
-                cutoff = run.completed_at + timedelta(hours=run.retention_hours)
-                if now > cutoff:
-                    session.delete(run)
-                    count += 1
-
-            session.commit()
-            return count
 
     # DM Conversation operations
     def store_dm_message(

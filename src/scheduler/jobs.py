@@ -1,7 +1,7 @@
 """Scheduled jobs for Privacy Summarizer.
 
 Jobs:
-- Purge: Deletes messages/summary runs that exceed their retention period
+- Purge: Deletes messages that exceed their retention period
 - Scheduled summaries: Generates and posts summaries at configured times
 
 Note: Message collection happens in real-time via JSON-RPC, not via scheduled jobs.
@@ -22,7 +22,7 @@ class ExportScheduler:
     """Scheduler for Privacy Summarizer jobs.
 
     Manages:
-    - Message and summary retention purge
+    - Message retention purge
     - Scheduled summary generation and posting
 
     Note: Message collection is handled real-time via SignalJSONRPCClient,
@@ -48,7 +48,6 @@ class ExportScheduler:
         # Get configuration from environment
         self.purge_interval_hours = int(os.getenv('PURGE_INTERVAL_HOURS', '1'))
         self.default_message_retention_hours = int(os.getenv('DEFAULT_MESSAGE_RETENTION_HOURS', '48'))
-        self.default_summary_retention_hours = int(os.getenv('DEFAULT_SUMMARY_RETENTION_HOURS', '168'))
         self.dm_retention_hours = int(os.getenv('DM_RETENTION_HOURS', '48'))
 
     def start(self):
@@ -81,7 +80,6 @@ class ExportScheduler:
         """Run cleanup tasks on daemon startup.
 
         - Purge any messages that exceeded retention during downtime
-        - Purge old summary runs
         """
         logger.info("Running startup cleanup...")
 
@@ -90,15 +88,11 @@ class ExportScheduler:
             messages_purged = self._purge_expired_messages()
             logger.info(f"Startup cleanup: purged {messages_purged} expired messages")
 
-            # Purge old summary runs
-            runs_purged = self.db_repo.purge_old_summary_runs()
-            logger.info(f"Startup cleanup: purged {runs_purged} old summary runs")
-
         except Exception as e:
             logger.error(f"Error during startup cleanup: {e}", exc_info=True)
 
     def _add_purge_job(self):
-        """Add periodic purge job for messages and summary runs."""
+        """Add periodic purge job for expired messages."""
         trigger = IntervalTrigger(hours=self.purge_interval_hours)
 
         self.scheduler.add_job(
@@ -112,10 +106,9 @@ class ExportScheduler:
         logger.info(f"Added purge job (every {self.purge_interval_hours} hour(s))")
 
     def purge_job(self):
-        """Purge expired messages and summary runs.
+        """Purge expired messages.
 
         Messages are purged based on their schedule's retention_hours.
-        Summary runs are purged based on their own retention_hours.
         """
         try:
             logger.info("Starting retention purge...")
@@ -123,10 +116,6 @@ class ExportScheduler:
             # Purge expired messages
             messages_purged = self._purge_expired_messages()
             logger.info(f"Purged {messages_purged} expired messages")
-
-            # Purge old summary runs
-            runs_purged = self.db_repo.purge_old_summary_runs()
-            logger.info(f"Purged {runs_purged} old summary runs")
 
             logger.info("Retention purge complete")
 
@@ -368,11 +357,9 @@ class ExportScheduler:
         """
         logger.info("Manual purge triggered")
         messages_purged = self._purge_expired_messages()
-        runs_purged = self.db_repo.purge_old_summary_runs()
 
         return {
-            'messages_purged': messages_purged,
-            'summary_runs_purged': runs_purged
+            'messages_purged': messages_purged
         }
 
     def reload_schedules(self):

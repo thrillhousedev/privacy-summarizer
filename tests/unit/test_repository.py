@@ -354,13 +354,11 @@ class TestSummaryRunOperations:
             run.id,
             message_count=42,
             oldest_message_time=now - timedelta(hours=24),
-            newest_message_time=now,
-            summary_text="The group discussed various topics."
+            newest_message_time=now
         )
 
         assert completed.status == "completed"
         assert completed.message_count == 42
-        assert completed.summary_text == "The group discussed various topics."
         assert completed.completed_at is not None
 
     def test_fail_summary_run(self, repo_with_schedule):

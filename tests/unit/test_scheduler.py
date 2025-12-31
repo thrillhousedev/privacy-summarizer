@@ -27,36 +27,33 @@ class TestExportSchedulerInit:
 
         assert scheduler.purge_interval_hours == 1
         assert scheduler.default_message_retention_hours == 48
-        assert scheduler.default_summary_retention_hours == 168
 
     def test_env_var_config(self):
         """Reads configuration from environment variables."""
         with patch.dict(os.environ, {
             'PURGE_INTERVAL_HOURS': '2',
-            'DEFAULT_MESSAGE_RETENTION_HOURS': '72',
-            'DEFAULT_SUMMARY_RETENTION_HOURS': '336'
+            'DEFAULT_MESSAGE_RETENTION_HOURS': '72'
         }):
             scheduler = ExportScheduler(MagicMock(), MagicMock())
 
             assert scheduler.purge_interval_hours == 2
             assert scheduler.default_message_retention_hours == 72
-            assert scheduler.default_summary_retention_hours == 336
 
 
 class TestPurgeJob:
     """Tests for purge_job method."""
 
     def test_calls_purge_methods(self):
-        """Calls both message and summary run purge."""
+        """Calls message purge method."""
         mock_repo = MagicMock()
         mock_repo.get_enabled_scheduled_summaries.return_value = []
         mock_repo.get_pending_stats.return_value = {'messages_by_group': {}}
-        mock_repo.purge_old_summary_runs.return_value = 5
 
         scheduler = ExportScheduler(MagicMock(), mock_repo)
         scheduler.purge_job()
 
-        mock_repo.purge_old_summary_runs.assert_called_once()
+        # Verify purge expired messages was attempted (may have no groups to purge)
+        mock_repo.get_enabled_scheduled_summaries.assert_called()
 
     def test_respects_schedule_retention(self):
         """Purges based on schedule retention_hours."""
@@ -72,7 +69,6 @@ class TestPurgeJob:
         mock_repo.get_enabled_scheduled_summaries.return_value = [mock_schedule]
         mock_repo.get_pending_stats.return_value = {'messages_by_group': {"group-abc": 10}}
         mock_repo.purge_messages_for_group.return_value = 5
-        mock_repo.purge_old_summary_runs.return_value = 0
 
         scheduler = ExportScheduler(MagicMock(), mock_repo)
         scheduler.purge_job()
@@ -246,14 +242,11 @@ class TestRunPurgeNow:
         mock_repo = MagicMock()
         mock_repo.get_enabled_scheduled_summaries.return_value = []
         mock_repo.get_pending_stats.return_value = {'messages_by_group': {}}
-        mock_repo.purge_old_summary_runs.return_value = 3
 
         scheduler = ExportScheduler(MagicMock(), mock_repo)
         result = scheduler.run_purge_now()
 
         assert "messages_purged" in result
-        assert "summary_runs_purged" in result
-        assert result["summary_runs_purged"] == 3
 
 
 class TestReloadSchedules:
