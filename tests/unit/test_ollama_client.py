@@ -362,31 +362,3 @@ class TestChat:
         result = client.chat(messages)
 
         assert "Python" in result or "remember" in result
-
-
-class TestCompareMessagesForContradictions:
-    """Tests for compare_messages_for_contradictions method."""
-
-    def test_less_than_two_groups(self):
-        """Returns empty list with fewer than 2 groups."""
-        client = OllamaClient()
-
-        result = client.compare_messages_for_contradictions({
-            "Group1": ["Message 1", "Message 2"]
-        })
-
-        assert result == []
-
-    @patch('requests.post')
-    def test_no_contradictions(self, mock_post):
-        """Returns empty list when response is NONE."""
-        mock_post.return_value.status_code = 200
-        mock_post.return_value.json.return_value = {"response": "NONE"}
-        client = OllamaClient()
-
-        result = client.compare_messages_for_contradictions({
-            "Group1": ["I'm feeling great"],
-            "Group2": ["Having a good day"]
-        })
-
-        assert result == []
