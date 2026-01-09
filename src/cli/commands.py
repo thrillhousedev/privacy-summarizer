@@ -1071,6 +1071,7 @@ def daemon(phone, config_dir, db_path, ollama_host, ollama_model, auto_accept_in
 !help - This help
 !status - Bot status
 !summary [hrs] [detail] - Generate summary (detail = verbose mode)
+!summarize [text] - Summarize provided text (not stored)
 !opt-out - Stop collecting your messages
 !opt-in - Resume collecting your messages
 !retention - View/set retention 🔒
@@ -1126,6 +1127,43 @@ def daemon(phone, config_dir, db_path, ollama_host, ollama_model, auto_accept_in
                                         # Small delay between messages to maintain order
                                         if len(summary_parts) > 1:
                                             time.sleep(0.5)
+                                elif text_lower.startswith("!summarize") and group_id:
+                                    logger.info("Processing !summarize command")
+                                    # Extract text after the command
+                                    text_to_summarize = message_text[len("!summarize"):].strip()
+
+                                    if not text_to_summarize or len(text_to_summarize) < 20:
+                                        send_signal_message(
+                                            group_id,
+                                            "Please provide text to summarize after the !summarize command."
+                                        )
+                                        continue
+
+                                    # Check Ollama availability
+                                    if not ollama.is_available():
+                                        send_signal_message(group_id, "⚠️ AI service is currently offline.")
+                                        continue
+
+                                    # Generate privacy-focused summary using chat API
+                                    try:
+                                        messages = [
+                                            {"role": "system", "content": ChatSummarizer.PRIVACY_SYSTEM_PROMPT},
+                                            {"role": "user", "content": f"""Summarize the following text concisely.
+
+<text>
+{text_to_summarize}
+</text>
+
+Provide a clear, concise summary. Remember: no names, no quotes, use general terms."""}
+                                        ]
+                                        summary = ollama.chat(messages=messages, temperature=0.3, max_tokens=300)
+
+                                        response = f"📝 Summary:\n\n{summary.strip()}"
+                                        for chunk in split_long_message(response):
+                                            send_signal_message(group_id, chunk)
+                                    except Exception as e:
+                                        logger.error(f"Error in !summarize: {e}")
+                                        send_signal_message(group_id, "⚠️ Failed to generate summary.")
                                 elif text_lower == "!!!purge" and group_id:
                                     logger.info("Processing !!!purge command")
                                     # Check permission - !!!purge is a write command

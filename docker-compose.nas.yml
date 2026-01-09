@@ -28,8 +28,8 @@ services:
     environment:
       # Ollama configuration
       # If running Ollama on NAS: http://localhost:11434
-      # If using remote Ollama: http://thrilltop.mesh.thrill.host:11434
-      - OLLAMA_HOST=${OLLAMA_HOST:-http://thrilltop.mesh.thrill.host:11434}
+      # If using remote Ollama via Tailscale: http://your-ollama-host:11434
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://localhost:11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral-nemo}
 
       # Database configuration
@@ -85,7 +85,7 @@ services:
       - ./config:/app/config:ro
 
     environment:
-      - OLLAMA_HOST=${OLLAMA_HOST:-http://thrilltop.mesh.thrill.host:11434}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://localhost:11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral-nemo}
       - DB_PATH=/data/privacy_summarizer.db
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}

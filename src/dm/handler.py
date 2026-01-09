@@ -5,6 +5,7 @@ import os
 from typing import Optional
 
 from ..ai.ollama_client import OllamaClient
+from ..ai.summarizer import ChatSummarizer
 from ..database.repository import DatabaseRepository
 from ..utils.message_utils import split_long_message
 
@@ -25,6 +26,7 @@ class DMHandler:
         "!help": "Show available commands",
         "!status": "Show bot and AI status",
         "!summary": "Summarize conversation and clear history",
+        "!summarize": "Summarize provided text (not stored)",
         "!retention": "View/set message retention period",
         "!!!purge": "Delete all conversation history"
     }
@@ -110,6 +112,9 @@ PRIVACY: When summarizing text, do not repeat names or direct quotes. Use genera
             return
         if lower.startswith("!retention"):
             self._handle_retention_command(user_id, text)
+            return
+        if lower.startswith("!summarize"):
+            self._handle_summarize_command(user_id, text)
             return
 
         # Store non-command user messages
@@ -364,6 +369,49 @@ Summary:"""
         self.db.set_dm_retention_hours(user_id, hours)
         self._send_message(user_id, f"Retention period set to {hours} hours.")
 
+    def _handle_summarize_command(self, user_id: str, text: str) -> None:
+        """Handle !summarize command - summarize provided text (not stored).
+
+        Args:
+            user_id: User's Signal UUID or phone number
+            text: Full command text including "!summarize"
+        """
+        # Extract text after the command
+        text_to_summarize = text[len("!summarize"):].strip()
+
+        if not text_to_summarize or len(text_to_summarize) < 20:
+            self._send_message(
+                user_id,
+                "Please provide text to summarize after the !summarize command."
+            )
+            return
+
+        # Check Ollama availability
+        if not self.ollama.is_available():
+            self._send_message(user_id, "⚠️ AI service is currently offline.")
+            return
+
+        try:
+            # Use privacy-focused prompt with chat API
+            messages = [
+                {"role": "system", "content": ChatSummarizer.PRIVACY_SYSTEM_PROMPT},
+                {"role": "user", "content": f"""Summarize the following text concisely.
+
+<text>
+{text_to_summarize}
+</text>
+
+Provide a clear, concise summary. Remember: no names, no quotes, use general terms."""}
+            ]
+            summary = self.ollama.chat(messages=messages, temperature=0.3, max_tokens=300)
+
+            response = f"📝 Summary:\n\n{summary.strip()}"
+            for chunk in split_long_message(response):
+                self._send_message(user_id, chunk)
+        except Exception as e:
+            logger.error(f"Error in !summarize: {e}")
+            self._send_message(user_id, "⚠️ Failed to generate summary.")
+
     def _send_help(self, user_id: str) -> None:
         """Send help message with available commands.
 
@@ -375,6 +423,7 @@ Summary:"""
 📋 !help - Show this help
 📊 !status - Show bot status
 📝 !summary - Summarize and clear history
+📝 !summarize [text] - Summarize provided text (not stored)
 ⏰ !retention - View your retention period
 ⏰ !retention [hours] - Set retention (1-168h)
 🗑️ !!!purge - Delete all conversation history

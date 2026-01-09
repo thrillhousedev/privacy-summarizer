@@ -487,3 +487,96 @@ class TestSetEnabled:
         handler.set_enabled(False)
 
         assert handler.enabled is False
+
+
+class TestSummarizeCommand:
+    """Tests for !summarize command (inline text summarization)."""
+
+    def test_summarize_with_text_calls_ollama(self):
+        """!summarize with text calls Ollama and returns summary."""
+        mock_ollama = MagicMock()
+        mock_ollama.is_available.return_value = True
+        mock_ollama.chat.return_value = "This is a summary of the text."
+        mock_signal = MagicMock()
+        mock_db = MagicMock()
+
+        handler = DMHandler(mock_ollama, mock_signal, mock_db)
+        handler.handle_dm("+1234567890", "!summarize This is some text that needs to be summarized for testing purposes.")
+
+        # Command should NOT be stored
+        mock_db.store_dm_message.assert_not_called()
+        # Ollama chat should be called
+        mock_ollama.chat.assert_called_once()
+        # Response should be sent
+        mock_signal.send_message.assert_called()
+        call_args = mock_signal.send_message.call_args
+        assert "Summary" in call_args[1]['message']
+
+    def test_summarize_without_text_returns_error(self):
+        """!summarize without text returns error message."""
+        mock_ollama = MagicMock()
+        mock_signal = MagicMock()
+        mock_db = MagicMock()
+
+        handler = DMHandler(mock_ollama, mock_signal, mock_db)
+        handler.handle_dm("+1234567890", "!summarize")
+
+        # Command should NOT be stored
+        mock_db.store_dm_message.assert_not_called()
+        # Ollama should NOT be called
+        mock_ollama.chat.assert_not_called()
+        # Error message should be sent
+        mock_signal.send_message.assert_called()
+        call_args = mock_signal.send_message.call_args
+        assert "provide text" in call_args[1]['message'].lower()
+
+    def test_summarize_with_short_text_returns_error(self):
+        """!summarize with text <20 chars returns error."""
+        mock_ollama = MagicMock()
+        mock_signal = MagicMock()
+        mock_db = MagicMock()
+
+        handler = DMHandler(mock_ollama, mock_signal, mock_db)
+        handler.handle_dm("+1234567890", "!summarize short")
+
+        # Ollama should NOT be called
+        mock_ollama.chat.assert_not_called()
+        # Error message should be sent
+        mock_signal.send_message.assert_called()
+        call_args = mock_signal.send_message.call_args
+        assert "provide text" in call_args[1]['message'].lower()
+
+    def test_summarize_when_ollama_offline(self):
+        """!summarize returns error when Ollama is offline."""
+        mock_ollama = MagicMock()
+        mock_ollama.is_available.return_value = False
+        mock_signal = MagicMock()
+        mock_db = MagicMock()
+
+        handler = DMHandler(mock_ollama, mock_signal, mock_db)
+        handler.handle_dm("+1234567890", "!summarize This is some text that needs to be summarized for testing purposes.")
+
+        # Ollama chat should NOT be called
+        mock_ollama.chat.assert_not_called()
+        # Error message should be sent
+        mock_signal.send_message.assert_called()
+        call_args = mock_signal.send_message.call_args
+        assert "offline" in call_args[1]['message'].lower()
+
+    def test_summarize_uses_privacy_prompt(self):
+        """!summarize uses the privacy system prompt."""
+        mock_ollama = MagicMock()
+        mock_ollama.is_available.return_value = True
+        mock_ollama.chat.return_value = "Summary text"
+        mock_signal = MagicMock()
+        mock_db = MagicMock()
+
+        handler = DMHandler(mock_ollama, mock_signal, mock_db)
+        handler.handle_dm("+1234567890", "!summarize This is some text that needs to be summarized for testing purposes.")
+
+        # Check that chat was called with system message containing privacy rules
+        call_args = mock_ollama.chat.call_args
+        messages = call_args.kwargs.get('messages') or call_args[0][0]
+        system_message = next((m for m in messages if m['role'] == 'system'), None)
+        assert system_message is not None
+        assert "privacy" in system_message['content'].lower() or "NEVER" in system_message['content']

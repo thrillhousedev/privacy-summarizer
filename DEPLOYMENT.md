@@ -6,8 +6,8 @@ This guide covers deploying Signal Summarizer on different platforms.
 
 All platforms need:
 - Docker and Docker Compose installed
-- Tailscale (for accessing thrilltop.mesh.thrill.host)
 - Ollama running somewhere (local or remote)
+- Optional: Tailscale or similar VPN for remote Ollama access
 
 ## Platform-Specific Instructions
 
@@ -36,7 +36,7 @@ All platforms need:
    Update:
    ```env
    SIGNAL_PHONE_NUMBER=+1234567890
-   OLLAMA_HOST=http://thrilltop.mesh.thrill.host:11434
+   OLLAMA_HOST=http://localhost:11434  # or remote host if using Tailscale
    ```
 
 3. **Use Windows-specific compose file:**
@@ -91,7 +91,7 @@ All platforms need:
    Update:
    ```env
    SIGNAL_PHONE_NUMBER=+1234567890
-   OLLAMA_HOST=http://thrilltop.mesh.thrill.host:11434
+   OLLAMA_HOST=http://localhost:11434  # or remote host if using Tailscale
    ```
 
 4. **Build and setup:**
@@ -204,7 +204,7 @@ Based on your setup:
    - Easy access
    - Full desktop environment
 
-Keep Ollama on `thrilltop` - it's powerful and already set up!
+If you have a dedicated machine with a GPU, run Ollama there and connect via Tailscale!
 
 ---
 
@@ -233,7 +233,7 @@ Ensure Tailscale is running on the host machine (not in Docker).
 ### Ollama connectivity
 Test from host:
 ```bash
-curl http://thrilltop.mesh.thrill.host:11434/api/tags
+curl http://localhost:11434/api/tags  # or your remote Ollama host
 ```
 
 If that works but Docker can't reach it, check Docker network settings.

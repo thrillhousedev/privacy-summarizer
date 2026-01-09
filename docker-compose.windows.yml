@@ -12,7 +12,7 @@ services:
     command: python -m src.main daemon
 
     # Windows doesn't support host network mode - use default bridge network
-    # Ollama is remote on thrilltop.mesh.thrill.host so no need for host network
+    # For local Ollama on Windows: http://host.docker.internal:11434
 
     volumes:
       # Persistent data storage
@@ -21,8 +21,8 @@ services:
       - ./config:/app/config:ro
 
     environment:
-      # Ollama configuration (remote on thrilltop via Tailscale)
-      - OLLAMA_HOST=${OLLAMA_HOST:-http://thrilltop.mesh.thrill.host:11434}
+      # Ollama configuration (use host.docker.internal for local Windows Ollama)
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral-nemo}
 
       # Database configuration
