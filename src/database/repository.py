@@ -636,6 +636,7 @@ class DatabaseRepository:
 
                 result.append({
                     'content': msg.content,
+                    'sender_uuid': msg.sender_uuid,
                     'reaction_count': len(emojis),
                     'emojis': emojis
                 })
