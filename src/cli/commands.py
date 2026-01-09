@@ -261,7 +261,7 @@ def accept_invite(phone, config_dir, group_id, list_only):
 @click.option('--config-dir', envvar='SIGNAL_CLI_CONFIG_DIR', default='/signal-cli-config', help='Signal-CLI config directory')
 @click.option('--db-path', envvar='DB_PATH', default='/data/privacy_summarizer.db', help='Database path')
 @click.option('--ollama-host', envvar='OLLAMA_HOST', default='http://localhost:11434', help='Ollama API host')
-@click.option('--ollama-model', envvar='OLLAMA_MODEL', default='mistral-nemo', help='Ollama model to use')
+@click.option('--ollama-model', envvar='OLLAMA_MODEL', default='dolphin-mistral:7b', help='Ollama model to use')
 @click.option('--group', required=True, help='Group name to summarize')
 @click.option('--hours', default=24, help='Hours to look back for messages (default: 24)')
 def summarize(phone, config_dir, db_path, ollama_host, ollama_model, group, hours):
@@ -739,6 +739,7 @@ Valid commands are:
 - !help - Show available commands
 - !status - Check bot status and retention setting
 - !summary [hours] [detail] - Generate summary
+- !summarize [text] - Summarize provided text (not stored)
 - !opt-out / !opt-in - Control message collection for yourself
 - !retention [hours] - View/set retention period (admin)
 - !schedule [add|remove|enable|disable] - Manage scheduled summaries (admin)
@@ -1349,7 +1350,7 @@ Provide a clear, concise summary. Remember: no names, no quotes, use general ter
     realtime_thread.start()
 
     click.echo("✓ Real-time message handling enabled")
-    click.echo("✓ Commands enabled: !help, !summary, !status, !opt-out, !opt-in, !retention, !purge-mode, !schedule, !power, !!!purge")
+    click.echo("✓ Commands enabled: !help, !summary, !summarize, !status, !opt-out, !opt-in, !retention, !purge-mode, !schedule, !power, !!!purge")
     if auto_accept_invites:
         click.echo("✓ Auto-accept group invites enabled")
 
@@ -1746,7 +1747,7 @@ def disable_schedule(schedule_id, name, db_path):
 @click.option('--phone', envvar='SIGNAL_PHONE_NUMBER', required=True, help='Phone number')
 @click.option('--config-dir', envvar='SIGNAL_CLI_CONFIG_DIR', default='/signal-cli-config', help='Signal-CLI config directory')
 @click.option('--ollama-host', envvar='OLLAMA_HOST', default='http://localhost:11434', help='Ollama host URL')
-@click.option('--ollama-model', envvar='OLLAMA_MODEL', default='mistral-nemo', help='Ollama model name')
+@click.option('--ollama-model', envvar='OLLAMA_MODEL', default='dolphin-mistral:7b', help='Ollama model name')
 def run_now(schedule_id, name, dry_run, db_path, phone, config_dir, ollama_host, ollama_model):
     """Manually run a scheduled summary immediately."""
     from ..exporter.summary_poster import SummaryPoster

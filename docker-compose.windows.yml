@@ -23,7 +23,7 @@ services:
     environment:
       # Ollama configuration (use host.docker.internal for local Windows Ollama)
       - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral-nemo}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-dolphin-mistral:7b}
 
       # Database configuration
       - DB_PATH=/data/privacy_summarizer.db

@@ -33,7 +33,7 @@ class AppDependencies:
         self.phone = os.getenv("SIGNAL_PHONE_NUMBER")
         self.config_dir = os.getenv("SIGNAL_CLI_CONFIG_DIR", "/signal-cli-config")
         self.ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-        self.ollama_model = os.getenv("OLLAMA_MODEL", "mistral-nemo")
+        self.ollama_model = os.getenv("OLLAMA_MODEL", "dolphin-mistral:7b")
 
         # Initialize core components
         self._db_repo = None

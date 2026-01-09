@@ -30,7 +30,7 @@ services:
       # If running Ollama on NAS: http://localhost:11434
       # If using remote Ollama via Tailscale: http://your-ollama-host:11434
       - OLLAMA_HOST=${OLLAMA_HOST:-http://localhost:11434}
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral-nemo}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-dolphin-mistral:7b}
 
       # Database configuration
       - DB_PATH=/data/privacy_summarizer.db
@@ -86,7 +86,7 @@ services:
 
     environment:
       - OLLAMA_HOST=${OLLAMA_HOST:-http://localhost:11434}
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral-nemo}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-dolphin-mistral:7b}
       - DB_PATH=/data/privacy_summarizer.db
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - SIGNAL_CLI_CONFIG_DIR=/signal-cli-config

@@ -235,10 +235,10 @@ On your iPhone/Android:
 
 You'll see all linked devices including:
 - Signal Desktop
-- signal-exporter
+- privacy-summarizer
 - Other linked phones/tablets
 
-### Unlink signal-exporter
+### Unlink privacy-summarizer
 
 If you want to remove signal-cli:
 

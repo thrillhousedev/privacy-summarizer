@@ -38,7 +38,7 @@ Privacy Summarizer generates summaries of Signal group chats using a self-hosted
 - **Flexible Scheduling**: Daily or weekly summaries with timezone support
 - **Self-Hosted**: Uses Ollama for on-premise inference (no cloud)
 - **Web UI**: Optional React frontend for schedule management
-- **In-Chat Commands**: `!help`, `!status`, `!summary`, `!opt-out`, `!!!purge` commands in Signal and DMs
+- **In-Chat Commands**: `!help`, `!status`, `!summary`, `!summarize`, `!opt-out`, `!!!purge` commands in Signal and DMs
 
 ## Architecture
 
@@ -58,7 +58,7 @@ Before you begin, ensure you have:
 1. **Docker & Docker Compose** installed
 2. **Ollama** installed and running on the host machine
    - Install from: https://ollama.ai
-   - Pull the model: `ollama pull mistral-nemo`
+   - Pull the model: `ollama pull dolphin-mistral:7b`
 3. **A Signal account** with a phone number you can use
 4. **Membership in Signal group chats** you want to summarize
 
@@ -80,7 +80,7 @@ Before you begin, ensure you have:
 ### 1. Clone and Configure
 
 ```bash
-git clone https://github.com/yourusername/privacy-summarizer.git
+git clone https://github.com/thrillhousedev/privacy-summarizer.git
 cd privacy-summarizer
 
 # Copy environment file
@@ -221,6 +221,7 @@ When the daemon is running, you can use these commands in any group:
 | `!help` | Show available commands | Everyone |
 | `!status` | Show bot status and current retention | Everyone |
 | `!summary [hours]` | Generate summary (default: retention period) | Everyone |
+| `!summarize [text]` | Summarize provided text (not stored) | Everyone |
 | `!opt-out` | Stop collecting your messages (deletes existing) | Everyone |
 | `!opt-in` | Resume message collection | Everyone |
 | `!retention` | View current message retention period | Everyone |
@@ -238,11 +239,11 @@ When the daemon is running, you can use these commands in any group:
 
 ### Direct Message (DM) Chat
 
-Send a direct message to the bot's Signal number for conversational AI chat:
+Send a direct message to the bot's Signal username for conversational AI chat:
 
 **Features:**
 - **Conversational AI**: Chat back-and-forth like ChatGPT
-- **Text Summarization**: Paste long text or say "summarize this" to get a summary
+- **Text Summarization**: Paste long text or say "!summarize" to get a summary
 - **Conversation History**: Full context maintained (auto-purged based on your retention setting)
 - **Custom Retention**: Set your own retention period (1-168 hours) via `!retention` command
 - **Kill Switch**: Can be disabled while keeping the bot running
@@ -254,6 +255,7 @@ Send a direct message to the bot's Signal number for conversational AI chat:
 | `!help` | Show available DM commands |
 | `!status` | Show bot and AI status, message count |
 | `!summary` | Summarize conversation history and clear it |
+| `!summarize` | Summarize provided text and discard it |
 | `!retention` | View your message retention period |
 | `!retention [hours]` | Set retention period (1-168 hours, default 48) |
 | `!!!purge` | Delete all conversation history immediately |
@@ -369,7 +371,7 @@ ENCRYPTION_KEY=your-secure-key-here  # Generate with secrets.token_urlsafe(32)
 **Optional:**
 ```bash
 OLLAMA_HOST=http://localhost:11434
-OLLAMA_MODEL=mistral-nemo
+OLLAMA_MODEL=dolphin-mistral:7b
 DB_PATH=/data/privacy_summarizer.db
 TIMEZONE=UTC
 LOG_LEVEL=INFO
@@ -515,5 +517,5 @@ Contributions welcome! Please open issues or pull requests on GitHub.
 ## Support
 
 For issues or questions:
-- GitHub Issues: https://github.com/yourusername/privacy-summarizer/issues
+- GitHub Issues: https://github.com/thrillhousedev/privacy-summarizer/issues
 - Documentation: See CLAUDE.md for technical details

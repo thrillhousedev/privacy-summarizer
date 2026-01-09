@@ -1,4 +1,4 @@
-"""Main entry point for Signal Summarizer."""
+"""Main entry point for Privacy Summarizer."""
 
 import os
 import sys
