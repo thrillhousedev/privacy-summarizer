@@ -27,6 +27,7 @@ class DMHandler:
         "!status": "Show bot and AI status",
         "!summary": "Summarize conversation and clear history",
         "!summarize": "Summarize provided text (not stored)",
+        "!ask": "Ask a question about conversation history",
         "!retention": "View/set message retention period",
         "!!!purge": "Delete all conversation history"
     }
@@ -115,6 +116,9 @@ PRIVACY: When summarizing text, do not repeat names or direct quotes. Use genera
             return
         if lower.startswith("!summarize"):
             self._handle_summarize_command(user_id, text)
+            return
+        if lower == "!ask" or lower.startswith("!ask "):
+            self._handle_ask_command(user_id, text)
             return
 
         # Store non-command user messages
@@ -412,6 +416,62 @@ Provide a clear, concise summary. Remember: no names, no quotes, use general ter
             logger.error(f"Error in !summarize: {e}")
             self._send_message(user_id, "⚠️ Failed to generate summary.")
 
+    def _handle_ask_command(self, user_id: str, text: str) -> None:
+        """Handle !ask command - ask a question about conversation history.
+
+        Args:
+            user_id: User's Signal UUID or phone number
+            text: Full command text including "!ask"
+        """
+        # Extract question
+        question = ""
+        if len(text) > len("!ask"):
+            question = text[len("!ask"):].strip()
+
+        if not question:
+            self._send_message(
+                user_id,
+                "❓ Please provide a question.\n\nUsage: !ask <question>"
+            )
+            return
+
+        # Check Ollama availability
+        if not self.ollama.is_available():
+            self._send_message(user_id, "⚠️ AI service is currently offline.")
+            return
+
+        # Get DM history for this user (reversed for newest-first)
+        history = self.db.get_dm_history(user_id)
+        history = list(reversed(history))
+
+        # Filter out commands and convert to dict format
+        messages_with_reactions = [
+            {"content": msg.content, "reaction_count": 0, "emojis": []}
+            for msg in history
+            if not msg.content.startswith("!")
+        ]
+
+        if not messages_with_reactions:
+            retention_hours = self.db.get_dm_retention_hours(user_id)
+            self._send_message(user_id, f"📭 No messages stored in the last {retention_hours} hours.")
+            return
+
+        # Send searching indicator with emoji
+        self._send_message(user_id, f"🔍 Searching {len(messages_with_reactions)} messages...")
+
+        try:
+            # Use ChatSummarizer for Q&A
+            summarizer = ChatSummarizer(self.ollama)
+            answer = summarizer.answer_question(question, messages_with_reactions)
+
+            # Format response with emojis
+            response = f"❓ {question}\n\n💬 {answer}"
+            for chunk in split_long_message(response):
+                self._send_message(user_id, chunk)
+        except Exception as e:
+            logger.error(f"Error in !ask: {e}")
+            self._send_message(user_id, "⚠️ Failed to answer question. Please try again.")
+
     def _send_help(self, user_id: str) -> None:
         """Send help message with available commands.
 
@@ -424,6 +484,7 @@ Provide a clear, concise summary. Remember: no names, no quotes, use general ter
 📊 !status - Show bot status
 📝 !summary - Summarize and clear history
 📝 !summarize [text] - Summarize provided text (not stored)
+🔍 !ask [question] - Ask about conversation history
 ⏰ !retention - View your retention period
 ⏰ !retention [hours] - Set retention (1-168h)
 🗑️ !!!purge - Delete all conversation history

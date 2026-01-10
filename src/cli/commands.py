@@ -1073,6 +1073,7 @@ def daemon(phone, config_dir, db_path, ollama_host, ollama_model, auto_accept_in
 !status - Bot status
 !summary [hrs] [detail] - Generate summary (detail = verbose mode)
 !summarize [text] - Summarize provided text (not stored)
+!ask [question] - Ask about stored messages
 !opt-out - Stop collecting your messages
 !opt-in - Resume collecting your messages
 !retention - View/set retention 🔒
@@ -1304,6 +1305,53 @@ Provide a clear, concise summary. Remember: no names, no quotes, use general ter
                                         send_signal_message(group_id, "Opted in. Your messages will now be collected.")
                                     else:
                                         send_signal_message(group_id, "Already opted in.")
+                                elif (text_lower == "!ask" or text_lower.startswith("!ask ")) and group_id:
+                                    logger.info("Processing !ask command")
+
+                                    # Extract question
+                                    question = ""
+                                    if len(message_text) > len("!ask"):
+                                        question = message_text[len("!ask"):].strip()
+
+                                    if not question:
+                                        send_signal_message(group_id, "❓ Please provide a question.\n\nUsage: !ask <question>")
+                                        continue
+
+                                    # Check Ollama availability
+                                    if not ollama.is_available():
+                                        send_signal_message(group_id, "⚠️ AI service is currently offline.")
+                                        continue
+
+                                    # Get stored messages for this group (reversed for newest-first)
+                                    messages_with_reactions = db_repo.get_messages_with_reactions_for_group(group_id)
+                                    messages_with_reactions = list(reversed(messages_with_reactions))
+
+                                    # Filter out commands
+                                    messages_with_reactions = [
+                                        m for m in messages_with_reactions
+                                        if not m.get('content', '').startswith('!')
+                                    ]
+
+                                    if not messages_with_reactions:
+                                        retention_hours = db_repo.get_group_retention_hours(group_id)
+                                        send_signal_message(group_id, f"📭 No messages stored in the last {retention_hours} hours.")
+                                        continue
+
+                                    # Send searching indicator with emoji
+                                    send_signal_message(group_id, f"🔍 Searching {len(messages_with_reactions)} messages...")
+
+                                    try:
+                                        # Use ChatSummarizer for Q&A
+                                        summarizer = ChatSummarizer(ollama)
+                                        answer = summarizer.answer_question(question, messages_with_reactions)
+
+                                        # Format response with emojis
+                                        response = f"❓ {question}\n\n💬 {answer}"
+                                        for chunk in split_long_message(response):
+                                            send_signal_message(group_id, chunk)
+                                    except Exception as e:
+                                        logger.error(f"Error in !ask: {e}")
+                                        send_signal_message(group_id, "⚠️ Failed to answer question. Please try again.")
                                 elif text_lower.startswith("!schedule") and group_id:
                                     logger.info("Processing !schedule command")
                                     _handle_schedule_command(
@@ -1350,7 +1398,7 @@ Provide a clear, concise summary. Remember: no names, no quotes, use general ter
     realtime_thread.start()
 
     click.echo("✓ Real-time message handling enabled")
-    click.echo("✓ Commands enabled: !help, !summary, !summarize, !status, !opt-out, !opt-in, !retention, !purge-mode, !schedule, !power, !!!purge")
+    click.echo("✓ Commands enabled: !help, !summary, !summarize, !ask, !status, !opt-out, !opt-in, !retention, !purge-mode, !schedule, !power, !!!purge")
     if auto_accept_invites:
         click.echo("✓ Auto-accept group invites enabled")
 
