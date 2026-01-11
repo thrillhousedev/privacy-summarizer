@@ -81,6 +81,21 @@ PRIVACY: When summarizing text, do not repeat names or direct quotes. Use genera
         else:
             self.retention_hours = int(os.getenv("DM_RETENTION_HOURS", "48"))
 
+    def _send_reaction(self, emoji: str, user_id: str, timestamp: int) -> None:
+        """Send a reaction to a user's message.
+
+        Args:
+            emoji: The emoji to react with
+            user_id: User's phone number (target author)
+            timestamp: Timestamp of the message to react to
+        """
+        if not timestamp:
+            return  # Can't react without timestamp
+        try:
+            self.signal.send_reaction(emoji, user_id, timestamp, recipient=user_id)
+        except Exception as e:
+            logger.debug(f"Failed to send reaction: {e}")  # Non-critical
+
     def handle_dm(self, user_id: str, message: str, timestamp: int = None) -> None:
         """Process an incoming DM.
 
@@ -100,25 +115,55 @@ PRIVACY: When summarizing text, do not repeat names or direct quotes. Use genera
 
         # Check for commands FIRST (don't store commands, consistent with group chats)
         if lower == "!help":
+            self._send_reaction("👀", user_id, timestamp)
             self._send_help(user_id)
+            self._send_reaction("✅", user_id, timestamp)
             return
         if lower == "!status":
+            self._send_reaction("👀", user_id, timestamp)
             self._send_status(user_id)
+            self._send_reaction("✅", user_id, timestamp)
             return
         if lower == "!summary":
-            self._handle_summary_command(user_id)
+            self._send_reaction("👀", user_id, timestamp)
+            try:
+                self._handle_summary_command(user_id)
+                self._send_reaction("✅", user_id, timestamp)
+            except Exception:
+                self._send_reaction("❌", user_id, timestamp)
+                raise
             return
         if lower == "!!!purge":
+            self._send_reaction("👀", user_id, timestamp)
             self._handle_purge_command(user_id)
+            self._send_reaction("✅", user_id, timestamp)
             return
         if lower.startswith("!retention"):
+            self._send_reaction("👀", user_id, timestamp)
             self._handle_retention_command(user_id, text)
+            self._send_reaction("✅", user_id, timestamp)
             return
         if lower.startswith("!summarize"):
-            self._handle_summarize_command(user_id, text)
+            self._send_reaction("👀", user_id, timestamp)
+            try:
+                self._handle_summarize_command(user_id, text)
+                self._send_reaction("✅", user_id, timestamp)
+            except Exception:
+                self._send_reaction("❌", user_id, timestamp)
+                raise
             return
         if lower == "!ask" or lower.startswith("!ask "):
-            self._handle_ask_command(user_id, text)
+            self._send_reaction("👀", user_id, timestamp)
+            try:
+                self._handle_ask_command(user_id, text)
+                self._send_reaction("✅", user_id, timestamp)
+            except Exception:
+                self._send_reaction("❌", user_id, timestamp)
+                raise
+            return
+        # Unknown command starting with !
+        if lower.startswith("!"):
+            self._send_reaction("❓", user_id, timestamp)
             return
 
         # Store non-command user messages

@@ -447,6 +447,38 @@ class SignalCLI:
         self._run_command(args, check_output=False)
         logger.info(f"Message sent to {group_id or recipient}")
 
+    def send_reaction(
+        self,
+        emoji: str,
+        target_author: str,
+        target_timestamp: int,
+        group_id: str = None,
+        recipient: str = None,
+        remove: bool = False
+    ):
+        """Send or remove a reaction to a message.
+
+        Args:
+            emoji: The emoji to react with (single unicode grapheme)
+            target_author: Phone number of the message author
+            target_timestamp: Timestamp of the message to react to
+            group_id: Group ID if reacting in a group
+            recipient: Recipient phone number if reacting in a DM
+            remove: If True, remove the reaction instead of adding
+        """
+        args = ["sendReaction", "-e", emoji, "-a", target_author, "-t", str(target_timestamp)]
+
+        if remove:
+            args.append("-r")
+
+        if group_id:
+            args.extend(["-g", group_id])
+        else:
+            args.append(recipient)
+
+        self._run_command(args, check_output=False)
+        logger.debug(f"Reaction {emoji} sent to message {target_timestamp}")
+
     def link_device(self, device_name: str = "privacy-summarizer") -> str:
         """Link signal-cli as a secondary device to an existing Signal account.
 

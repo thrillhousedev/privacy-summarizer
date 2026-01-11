@@ -849,6 +849,49 @@ def daemon(phone, config_dir, db_path, ollama_host, ollama_model, auto_accept_in
             logger.error(f"Error sending message: {e}")
             return False
 
+    def send_reaction(emoji: str, target_author: str, target_timestamp: int,
+                      group_id: str = None, recipient: str = None) -> bool:
+        """Send a reaction to a message via signal-cli.
+
+        Args:
+            emoji: The emoji to react with
+            target_author: Phone number of the message author
+            target_timestamp: Timestamp of the message to react to
+            group_id: Group ID if reacting in a group
+            recipient: Recipient phone number if reacting in a DM
+        """
+        try:
+            args = ["signal-cli", "--config", config_dir, "-a", phone,
+                    "sendReaction", "-e", emoji, "-a", target_author,
+                    "-t", str(target_timestamp)]
+            if group_id:
+                args.extend(["-g", group_id])
+            else:
+                args.append(recipient)
+
+            result = subprocess.run(args, capture_output=True, text=True, timeout=10)
+            if result.returncode != 0:
+                logger.debug(f"Failed to send reaction: {result.stderr}")
+                return False
+            return True
+        except Exception as e:
+            logger.debug(f"Error sending reaction: {e}")
+            return False
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def command_reaction(target_author: str, target_timestamp: int,
+                         group_id: str = None, recipient: str = None):
+        """Context manager for command reactions: 👀 on start, ✅ on success, ❌ on error."""
+        send_reaction("👀", target_author, target_timestamp, group_id, recipient)
+        try:
+            yield
+            send_reaction("✅", target_author, target_timestamp, group_id, recipient)
+        except Exception:
+            send_reaction("❌", target_author, target_timestamp, group_id, recipient)
+            raise
+
     # Setup summarize callback
     def summarize_callback(group_id: str, hours: int, detail: bool = False) -> str:
         """Generate summary for a group via !summary command.
@@ -1067,7 +1110,8 @@ def daemon(phone, config_dir, db_path, ollama_host, ollama_model, auto_accept_in
                                 # Process commands
                                 if text_lower == "!help" and group_id:
                                     logger.info("Processing !help command")
-                                    help_text = """📖 Commands
+                                    with command_reaction(source_number, timestamp, group_id=group_id):
+                                        help_text = """📖 Commands
 
 !help - This help
 !status - Bot status
@@ -1084,70 +1128,70 @@ def daemon(phone, config_dir, db_path, ollama_host, ollama_model, auto_accept_in
 
 🔒 = Admin-only
 📖 Docs: https://next.maidan.cloud/apps/collectives/p/SCXCe4p3RDexBZC/Privacy-Summarizer-Docs-4"""
-                                    send_signal_message(group_id, help_text)
+                                        send_signal_message(group_id, help_text)
                                 elif text_lower == "!status" and group_id:
                                     logger.info("Processing !status command")
-                                    message_counts = db_repo.get_message_count_by_group()
-                                    count = message_counts.get(group_id, 0)
-                                    retention_hours = db_repo.get_group_retention_hours(group_id)
-                                    purge_on = db_repo.get_group_purge_on_summary(group_id)
-                                    purge_mode = "on" if purge_on else "off"
-                                    status_msg = f"""📊 Status
+                                    with command_reaction(source_number, timestamp, group_id=group_id):
+                                        message_counts = db_repo.get_message_count_by_group()
+                                        count = message_counts.get(group_id, 0)
+                                        retention_hours = db_repo.get_group_retention_hours(group_id)
+                                        purge_on = db_repo.get_group_purge_on_summary(group_id)
+                                        purge_mode = "on" if purge_on else "off"
+                                        status_msg = f"""📊 Status
 
 ✅ Service: Active
 💬 Messages: {count} stored
 ⏰ Retention: {retention_hours} hours
 🗑️ Purge after summary: {purge_mode}"""
-                                    send_signal_message(group_id, status_msg)
+                                        send_signal_message(group_id, status_msg)
                                 elif text_lower.startswith("!summary") and group_id:
                                     logger.info("Processing !summary command")
-                                    # Parse hours and detail from command
-                                    # Syntax: !summary [hours] [detail]
-                                    parts = message_text.strip().split()
-                                    hours = db_repo.get_group_retention_hours(group_id)
-                                    detail = False
+                                    with command_reaction(source_number, timestamp, group_id=group_id):
+                                        # Parse hours and detail from command
+                                        # Syntax: !summary [hours] [detail]
+                                        parts = message_text.strip().split()
+                                        hours = db_repo.get_group_retention_hours(group_id)
+                                        detail = False
 
-                                    for part in parts[1:]:
-                                        if part.lower() == 'detail':
-                                            detail = True
-                                        else:
-                                            try:
-                                                hours = int(part)
-                                            except ValueError:
-                                                pass
+                                        for part in parts[1:]:
+                                            if part.lower() == 'detail':
+                                                detail = True
+                                            else:
+                                                try:
+                                                    hours = int(part)
+                                                except ValueError:
+                                                    pass
 
-                                    mode_str = " (detailed)" if detail else ""
-                                    send_signal_message(group_id, f"Generating summary for the last {hours} hours{mode_str}...")
-                                    summary = summarize_callback(group_id, hours, detail=detail)
-                                    # Split long summaries to fit within Signal's character limit
-                                    logger.info(f"Summary length: {len(summary)} characters")
-                                    summary_parts = split_long_message(summary)
-                                    logger.info(f"Split into {len(summary_parts)} parts")
-                                    for i, part in enumerate(summary_parts):
-                                        logger.info(f"Sending part {i+1}/{len(summary_parts)} ({len(part)} chars)")
-                                        send_signal_message(group_id, part)
-                                        # Small delay between messages to maintain order
-                                        if len(summary_parts) > 1:
-                                            time.sleep(0.5)
+                                        summary = summarize_callback(group_id, hours, detail=detail)
+                                        # Split long summaries to fit within Signal's character limit
+                                        logger.info(f"Summary length: {len(summary)} characters")
+                                        summary_parts = split_long_message(summary)
+                                        logger.info(f"Split into {len(summary_parts)} parts")
+                                        for i, part in enumerate(summary_parts):
+                                            logger.info(f"Sending part {i+1}/{len(summary_parts)} ({len(part)} chars)")
+                                            send_signal_message(group_id, part)
+                                            # Small delay between messages to maintain order
+                                            if len(summary_parts) > 1:
+                                                time.sleep(0.5)
                                 elif text_lower.startswith("!summarize") and group_id:
                                     logger.info("Processing !summarize command")
-                                    # Extract text after the command
-                                    text_to_summarize = message_text[len("!summarize"):].strip()
+                                    with command_reaction(source_number, timestamp, group_id=group_id):
+                                        # Extract text after the command
+                                        text_to_summarize = message_text[len("!summarize"):].strip()
 
-                                    if not text_to_summarize or len(text_to_summarize) < 20:
-                                        send_signal_message(
-                                            group_id,
-                                            "Please provide text to summarize after the !summarize command."
-                                        )
-                                        continue
+                                        if not text_to_summarize or len(text_to_summarize) < 20:
+                                            send_signal_message(
+                                                group_id,
+                                                "Please provide text to summarize after the !summarize command."
+                                            )
+                                            continue
 
-                                    # Check Ollama availability
-                                    if not ollama.is_available():
-                                        send_signal_message(group_id, "⚠️ AI service is currently offline.")
-                                        continue
+                                        # Check Ollama availability
+                                        if not ollama.is_available():
+                                            send_signal_message(group_id, "⚠️ AI service is currently offline.")
+                                            continue
 
-                                    # Generate privacy-focused summary using chat API
-                                    try:
+                                        # Generate privacy-focused summary using chat API
                                         messages = [
                                             {"role": "system", "content": ChatSummarizer.PRIVACY_SYSTEM_PROMPT},
                                             {"role": "user", "content": f"""Summarize the following text concisely.
@@ -1163,184 +1207,183 @@ Provide a clear, concise summary. Remember: no names, no quotes, use general ter
                                         response = f"📝 Summary:\n\n{summary.strip()}"
                                         for chunk in split_long_message(response):
                                             send_signal_message(group_id, chunk)
-                                    except Exception as e:
-                                        logger.error(f"Error in !summarize: {e}")
-                                        send_signal_message(group_id, "⚠️ Failed to generate summary.")
                                 elif text_lower == "!!!purge" and group_id:
                                     logger.info("Processing !!!purge command")
-                                    # Check permission - !!!purge is a write command
-                                    power_mode = db_repo.get_group_power_mode(group_id)
-                                    if power_mode == "admins":
-                                        is_admin = _is_group_admin(signal_cli, group_id, source_uuid, source_number)
-                                        if not is_admin:
-                                            send_signal_message(group_id, "🔒 This command is admin-only. Ask a room admin to run it.")
-                                            continue
-                                    count = db_repo.purge_all_messages_for_group(group_id)
-                                    send_signal_message(group_id, f"✅ Purged {count} stored messages.")
+                                    with command_reaction(source_number, timestamp, group_id=group_id):
+                                        # Check permission - !!!purge is a write command
+                                        power_mode = db_repo.get_group_power_mode(group_id)
+                                        if power_mode == "admins":
+                                            is_admin = _is_group_admin(signal_cli, group_id, source_uuid, source_number)
+                                            if not is_admin:
+                                                send_signal_message(group_id, "🔒 This command is admin-only. Ask a room admin to run it.")
+                                                continue
+                                        count = db_repo.purge_all_messages_for_group(group_id)
+                                        send_signal_message(group_id, f"✅ Purged {count} stored messages.")
                                 elif text_lower.startswith("!power") and group_id:
                                     logger.info("Processing !power command")
-                                    parts = message_text.strip().split()
-                                    is_admin = _is_group_admin(signal_cli, group_id, source_uuid, source_number)
+                                    with command_reaction(source_number, timestamp, group_id=group_id):
+                                        parts = message_text.strip().split()
+                                        is_admin = _is_group_admin(signal_cli, group_id, source_uuid, source_number)
 
-                                    if len(parts) == 1:
-                                        # View current power mode (anyone can view)
-                                        current = db_repo.get_group_power_mode(group_id)
-                                        if current == "admins":
-                                            response = "⚡ Power Level: ADMINS ONLY\n\nOnly room admins can change settings. Regular members can view but not modify."
+                                        if len(parts) == 1:
+                                            # View current power mode (anyone can view)
+                                            current = db_repo.get_group_power_mode(group_id)
+                                            if current == "admins":
+                                                response = "⚡ Power Level: ADMINS ONLY\n\nOnly room admins can change settings. Regular members can view but not modify."
+                                            else:
+                                                response = "⚡ Power Level: EVERYONE\n\nAll room members can change settings. Democracy reigns!"
+                                            send_signal_message(group_id, response)
+                                        elif not is_admin:
+                                            # Only admins can change power mode (always)
+                                            send_signal_message(group_id, "🔒 Nice try! Only admins can change power levels.")
+                                        elif parts[1].lower() == "admins":
+                                            db_repo.set_group_power_mode(group_id, "admins")
+                                            send_signal_message(group_id, "⚡ Power Level: ADMINS ONLY\n\n🏰 The castle gates are locked! Only admins hold the keys now.")
+                                        elif parts[1].lower() == "everyone":
+                                            db_repo.set_group_power_mode(group_id, "everyone")
+                                            send_signal_message(group_id, "⚡ Power Level: EVERYONE\n\n🎉 Power to the people! All members can now change settings.")
                                         else:
-                                            response = "⚡ Power Level: EVERYONE\n\nAll room members can change settings. Democracy reigns!"
-                                        send_signal_message(group_id, response)
-                                    elif not is_admin:
-                                        # Only admins can change power mode (always)
-                                        send_signal_message(group_id, "🔒 Nice try! Only admins can change power levels.")
-                                    elif parts[1].lower() == "admins":
-                                        db_repo.set_group_power_mode(group_id, "admins")
-                                        send_signal_message(group_id, "⚡ Power Level: ADMINS ONLY\n\n🏰 The castle gates are locked! Only admins hold the keys now.")
-                                    elif parts[1].lower() == "everyone":
-                                        db_repo.set_group_power_mode(group_id, "everyone")
-                                        send_signal_message(group_id, "⚡ Power Level: EVERYONE\n\n🎉 Power to the people! All members can now change settings.")
-                                    else:
-                                        send_signal_message(group_id, "Usage: !power [admins|everyone]")
+                                            send_signal_message(group_id, "Usage: !power [admins|everyone]")
                                 elif text_lower.startswith("!purge-mode") and group_id:
                                     logger.info("Processing !purge-mode command")
-                                    parts = message_text.strip().split()
+                                    with command_reaction(source_number, timestamp, group_id=group_id):
+                                        parts = message_text.strip().split()
 
-                                    if len(parts) == 1:
-                                        # View current setting (anyone can view)
-                                        purge_on = db_repo.get_group_purge_on_summary(group_id)
-                                        if purge_on:
-                                            response = "🗑️ Purge Mode: ON\n\nMessages are deleted immediately after !summary."
+                                        if len(parts) == 1:
+                                            # View current setting (anyone can view)
+                                            purge_on = db_repo.get_group_purge_on_summary(group_id)
+                                            if purge_on:
+                                                response = "🗑️ Purge Mode: ON\n\nMessages are deleted immediately after !summary."
+                                            else:
+                                                response = "🗑️ Purge Mode: OFF\n\nMessages are kept until retention period expires."
+                                            send_signal_message(group_id, response)
                                         else:
-                                            response = "🗑️ Purge Mode: OFF\n\nMessages are kept until retention period expires."
-                                        send_signal_message(group_id, response)
-                                    else:
-                                        # Write operation - check permission
-                                        power_mode = db_repo.get_group_power_mode(group_id)
-                                        if power_mode == "admins":
-                                            is_admin = _is_group_admin(signal_cli, group_id, source_uuid, source_number)
-                                            if not is_admin:
-                                                send_signal_message(group_id, "🔒 This command is admin-only. Ask a room admin to run it.")
-                                                continue
+                                            # Write operation - check permission
+                                            power_mode = db_repo.get_group_power_mode(group_id)
+                                            if power_mode == "admins":
+                                                is_admin = _is_group_admin(signal_cli, group_id, source_uuid, source_number)
+                                                if not is_admin:
+                                                    send_signal_message(group_id, "🔒 This command is admin-only. Ask a room admin to run it.")
+                                                    continue
 
-                                        arg = parts[1].lower()
-                                        if arg == "on":
-                                            db_repo.set_group_purge_on_summary(group_id, True)
-                                            send_signal_message(group_id, "🗑️ Purge Mode: ON\n\nMessages will be deleted immediately after !summary.")
-                                        elif arg == "off":
-                                            db_repo.set_group_purge_on_summary(group_id, False)
-                                            send_signal_message(group_id, "🗑️ Purge Mode: OFF\n\nMessages will be kept until retention period expires.\nRun multiple summaries from the same messages!")
-                                        else:
-                                            send_signal_message(group_id, "Usage: !purge-mode [on|off]")
+                                            arg = parts[1].lower()
+                                            if arg == "on":
+                                                db_repo.set_group_purge_on_summary(group_id, True)
+                                                send_signal_message(group_id, "🗑️ Purge Mode: ON\n\nMessages will be deleted immediately after !summary.")
+                                            elif arg == "off":
+                                                db_repo.set_group_purge_on_summary(group_id, False)
+                                                send_signal_message(group_id, "🗑️ Purge Mode: OFF\n\nMessages will be kept until retention period expires.\nRun multiple summaries from the same messages!")
+                                            else:
+                                                send_signal_message(group_id, "Usage: !purge-mode [on|off]")
                                 elif text_lower.startswith("!retention") and group_id:
                                     logger.info("Processing !retention command")
-                                    parts = message_text.strip().split()
-                                    if len(parts) == 1:
-                                        # Just "!retention" - show current setting (anyone can view)
-                                        hours = db_repo.get_group_retention_hours(group_id)
-                                        settings = db_repo.get_group_settings(group_id)
-                                        if settings and settings.source == "signal":
-                                            mode = "auto"
-                                        elif settings and settings.source == "command":
-                                            mode = "fixed"
+                                    with command_reaction(source_number, timestamp, group_id=group_id):
+                                        parts = message_text.strip().split()
+                                        if len(parts) == 1:
+                                            # Just "!retention" - show current setting (anyone can view)
+                                            hours = db_repo.get_group_retention_hours(group_id)
+                                            settings = db_repo.get_group_settings(group_id)
+                                            if settings and settings.source == "signal":
+                                                mode = "auto"
+                                            elif settings and settings.source == "command":
+                                                mode = "fixed"
+                                            else:
+                                                mode = "default"
+                                            send_signal_message(group_id,
+                                                f"⏰ Retention: {hours}h ({mode})\n"
+                                                f"Set: !retention [hours] or !retention auto")
                                         else:
-                                            mode = "default"
-                                        send_signal_message(group_id,
-                                            f"⏰ Retention: {hours}h ({mode})\n"
-                                            f"Set: !retention [hours] or !retention auto")
-                                    else:
-                                        # Write operation - check permission
-                                        power_mode = db_repo.get_group_power_mode(group_id)
-                                        if power_mode == "admins":
-                                            is_admin = _is_group_admin(signal_cli, group_id, source_uuid, source_number)
-                                            if not is_admin:
-                                                send_signal_message(group_id, "🔒 This command is admin-only. Ask a room admin to run it.")
-                                                continue
+                                            # Write operation - check permission
+                                            power_mode = db_repo.get_group_power_mode(group_id)
+                                            if power_mode == "admins":
+                                                is_admin = _is_group_admin(signal_cli, group_id, source_uuid, source_number)
+                                                if not is_admin:
+                                                    send_signal_message(group_id, "🔒 This command is admin-only. Ask a room admin to run it.")
+                                                    continue
 
-                                        if parts[1].lower() in ("signal", "auto"):
-                                            # "!retention auto" - re-enable following Signal's setting
-                                            current_hours = db_repo.get_group_retention_hours(group_id)
-                                            db_repo.set_group_retention_hours(group_id, current_hours, source="signal")
-                                            send_signal_message(group_id, f"✅ Auto mode: {current_hours}h\nSyncs with Signal's disappearing messages")
-                                        else:
-                                            # "!retention [hours]" - set fixed retention
-                                            try:
-                                                hours = int(parts[1])
-                                                if not 1 <= hours <= 168:
-                                                    raise ValueError()
-                                                db_repo.set_group_retention_hours(group_id, hours, source="command")
-                                                send_signal_message(group_id, f"✅ Fixed: {hours}h\nWon't change with Signal settings")
-                                            except ValueError:
-                                                send_signal_message(group_id, "❌ Use 1-168 hours or 'auto'")
+                                            if parts[1].lower() in ("signal", "auto"):
+                                                # "!retention auto" - re-enable following Signal's setting
+                                                current_hours = db_repo.get_group_retention_hours(group_id)
+                                                db_repo.set_group_retention_hours(group_id, current_hours, source="signal")
+                                                send_signal_message(group_id, f"✅ Auto mode: {current_hours}h\nSyncs with Signal's disappearing messages")
+                                            else:
+                                                # "!retention [hours]" - set fixed retention
+                                                try:
+                                                    hours = int(parts[1])
+                                                    if not 1 <= hours <= 168:
+                                                        raise ValueError()
+                                                    db_repo.set_group_retention_hours(group_id, hours, source="command")
+                                                    send_signal_message(group_id, f"✅ Fixed: {hours}h\nWon't change with Signal settings")
+                                                except ValueError:
+                                                    send_signal_message(group_id, "❌ Use 1-168 hours or 'auto'")
                                 elif text_lower == "!opt-out" and group_id:
                                     logger.info("Processing !opt-out command")
-                                    # Anyone can opt themselves out - no admin check needed
-                                    if not source_uuid:
-                                        send_signal_message(group_id, "Unable to process - user ID not available.")
-                                        continue
+                                    with command_reaction(source_number, timestamp, group_id=group_id):
+                                        # Anyone can opt themselves out - no admin check needed
+                                        if not source_uuid:
+                                            send_signal_message(group_id, "Unable to process - user ID not available.")
+                                            continue
 
-                                    # Set opt-out status
-                                    db_repo.set_user_opt_out(group_id, source_uuid, opted_out=True)
+                                        # Set opt-out status
+                                        db_repo.set_user_opt_out(group_id, source_uuid, opted_out=True)
 
-                                    # Immediately delete their existing messages
-                                    deleted_count = db_repo.delete_user_messages_in_group(group_id, source_uuid)
+                                        # Immediately delete their existing messages
+                                        deleted_count = db_repo.delete_user_messages_in_group(group_id, source_uuid)
 
-                                    if deleted_count > 0:
-                                        send_signal_message(group_id, f"Opted out. {deleted_count} messages deleted.")
-                                    else:
-                                        send_signal_message(group_id, "Opted out. Your messages will no longer be stored.")
+                                        if deleted_count > 0:
+                                            send_signal_message(group_id, f"Opted out. {deleted_count} messages deleted.")
+                                        else:
+                                            send_signal_message(group_id, "Opted out. Your messages will no longer be stored.")
                                 elif text_lower == "!opt-in" and group_id:
                                     logger.info("Processing !opt-in command")
-                                    # Anyone can opt themselves back in
-                                    if not source_uuid:
-                                        send_signal_message(group_id, "Unable to process - user ID not available.")
-                                        continue
+                                    with command_reaction(source_number, timestamp, group_id=group_id):
+                                        # Anyone can opt themselves back in
+                                        if not source_uuid:
+                                            send_signal_message(group_id, "Unable to process - user ID not available.")
+                                            continue
 
-                                    # Check if they were actually opted out
-                                    was_opted_out = db_repo.is_user_opted_out(group_id, source_uuid)
+                                        # Check if they were actually opted out
+                                        was_opted_out = db_repo.is_user_opted_out(group_id, source_uuid)
 
-                                    # Set opt-in status
-                                    db_repo.set_user_opt_out(group_id, source_uuid, opted_out=False)
+                                        # Set opt-in status
+                                        db_repo.set_user_opt_out(group_id, source_uuid, opted_out=False)
 
-                                    if was_opted_out:
-                                        send_signal_message(group_id, "Opted in. Your messages will now be collected.")
-                                    else:
-                                        send_signal_message(group_id, "Already opted in.")
+                                        if was_opted_out:
+                                            send_signal_message(group_id, "Opted in. Your messages will now be collected.")
+                                        else:
+                                            send_signal_message(group_id, "Already opted in.")
                                 elif (text_lower == "!ask" or text_lower.startswith("!ask ")) and group_id:
                                     logger.info("Processing !ask command")
+                                    with command_reaction(source_number, timestamp, group_id=group_id):
+                                        # Extract question
+                                        question = ""
+                                        if len(message_text) > len("!ask"):
+                                            question = message_text[len("!ask"):].strip()
 
-                                    # Extract question
-                                    question = ""
-                                    if len(message_text) > len("!ask"):
-                                        question = message_text[len("!ask"):].strip()
+                                        if not question:
+                                            send_signal_message(group_id, "❓ Please provide a question.\n\nUsage: !ask <question>")
+                                            continue
 
-                                    if not question:
-                                        send_signal_message(group_id, "❓ Please provide a question.\n\nUsage: !ask <question>")
-                                        continue
+                                        # Check Ollama availability
+                                        if not ollama.is_available():
+                                            send_signal_message(group_id, "⚠️ AI service is currently offline.")
+                                            continue
 
-                                    # Check Ollama availability
-                                    if not ollama.is_available():
-                                        send_signal_message(group_id, "⚠️ AI service is currently offline.")
-                                        continue
+                                        # Get stored messages for this group (reversed for newest-first)
+                                        messages_with_reactions = db_repo.get_messages_with_reactions_for_group(group_id)
+                                        messages_with_reactions = list(reversed(messages_with_reactions))
 
-                                    # Get stored messages for this group (reversed for newest-first)
-                                    messages_with_reactions = db_repo.get_messages_with_reactions_for_group(group_id)
-                                    messages_with_reactions = list(reversed(messages_with_reactions))
+                                        # Filter out commands
+                                        messages_with_reactions = [
+                                            m for m in messages_with_reactions
+                                            if not m.get('content', '').startswith('!')
+                                        ]
 
-                                    # Filter out commands
-                                    messages_with_reactions = [
-                                        m for m in messages_with_reactions
-                                        if not m.get('content', '').startswith('!')
-                                    ]
+                                        if not messages_with_reactions:
+                                            retention_hours = db_repo.get_group_retention_hours(group_id)
+                                            send_signal_message(group_id, f"📭 No messages stored in the last {retention_hours} hours.")
+                                            continue
 
-                                    if not messages_with_reactions:
-                                        retention_hours = db_repo.get_group_retention_hours(group_id)
-                                        send_signal_message(group_id, f"📭 No messages stored in the last {retention_hours} hours.")
-                                        continue
-
-                                    # Send searching indicator with emoji
-                                    send_signal_message(group_id, f"🔍 Searching {len(messages_with_reactions)} messages...")
-
-                                    try:
                                         # Use ChatSummarizer for Q&A
                                         summarizer = ChatSummarizer(ollama)
                                         answer = summarizer.answer_question(question, messages_with_reactions)
@@ -1349,18 +1392,17 @@ Provide a clear, concise summary. Remember: no names, no quotes, use general ter
                                         response = f"❓ {question}\n\n💬 {answer}"
                                         for chunk in split_long_message(response):
                                             send_signal_message(group_id, chunk)
-                                    except Exception as e:
-                                        logger.error(f"Error in !ask: {e}")
-                                        send_signal_message(group_id, "⚠️ Failed to answer question. Please try again.")
                                 elif text_lower.startswith("!schedule") and group_id:
                                     logger.info("Processing !schedule command")
-                                    _handle_schedule_command(
-                                        message_text, group_id, source_uuid, source_number,
-                                        db_repo, signal_cli, send_signal_message, ollama, scheduler
-                                    )
+                                    with command_reaction(source_number, timestamp, group_id=group_id):
+                                        _handle_schedule_command(
+                                            message_text, group_id, source_uuid, source_number,
+                                            db_repo, signal_cli, send_signal_message, ollama, scheduler
+                                        )
                                 elif is_command and group_id:
-                                    # Unrecognized command - provide helpful suggestion
+                                    # Unrecognized command - react with ❓
                                     logger.info(f"Unknown command: {message_text}")
+                                    send_reaction("❓", source_number, timestamp, group_id=group_id)
                                     _handle_unknown_command(
                                         message_text, group_id, send_signal_message, ollama
                                     )
