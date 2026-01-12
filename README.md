@@ -39,6 +39,7 @@ Privacy Summarizer generates summaries of Signal group chats using a self-hosted
 - **Self-Hosted**: Uses Ollama for on-premise inference (no cloud)
 - **Web UI**: Optional React frontend for schedule management
 - **In-Chat Commands**: `!help`, `!status`, `!summary`, `!summarize`, `!opt-out`, `!!!purge` commands in Signal and DMs
+- **SSE Streaming**: Optional low-latency mode (<500ms vs 0-5s polling)
 
 ## Architecture
 
@@ -305,7 +306,9 @@ docker-compose restart
 ### Data Flow
 
 1. **Real-Time Message Collection** (continuous):
-   - Daemon polls signal-cli every few seconds for new messages
+   - Daemon receives messages via signal-cli (two modes):
+     - **Default**: Subprocess polling every few seconds
+     - **SSE mode**: Real-time streaming (<500ms latency)
    - Messages stored immediately in encrypted SQLCipher database
    - Deduplicated by `(timestamp, sender_uuid, group_id)`
    - Reactions stored for engagement metrics
@@ -420,6 +423,17 @@ docker-compose -f docker-compose.full.yml up -d
 # Use NAS-specific compose file
 docker-compose -f docker-compose.nas.yml up -d
 ```
+
+### SSE Streaming Mode (Optional)
+
+For lower latency message handling (<500ms vs 0-5s polling):
+
+```bash
+# Start with SSE streaming enabled
+docker-compose --profile sse -f docker-compose.yml -f docker-compose.sse.yml up -d
+```
+
+This runs a separate `signal-daemon` container that provides real-time message streaming via SSE and JSON-RPC for sending messages.
 
 ### Full Stack with Web UI
 

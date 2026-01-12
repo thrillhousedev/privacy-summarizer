@@ -133,6 +133,42 @@ The main `docker-compose.yml` uses `network_mode: host` which works on macOS via
 
 ---
 
+### ⚡ SSE Streaming Mode (Optional)
+
+For lower latency message handling (<500ms vs 0-5s polling), use SSE streaming mode:
+
+```bash
+# Build both containers
+docker-compose build
+
+# Start with SSE streaming enabled
+docker-compose --profile sse -f docker-compose.yml -f docker-compose.sse.yml up -d
+```
+
+**What this does:**
+- Runs a separate `signal-daemon` container with signal-cli HTTP daemon
+- Privacy-summarizer connects via Server-Sent Events (SSE) for real-time messages
+- Uses JSON-RPC for sending messages/reactions
+- Reduces message latency from 0-5 seconds to <500ms
+
+**Environment variables for SSE mode** (set automatically by `docker-compose.sse.yml`):
+```env
+USE_SSE=true
+SIGNAL_DAEMON_HOST=signal-daemon
+SIGNAL_DAEMON_PORT=8080
+```
+
+**Monitoring SSE mode:**
+```bash
+# View both containers
+docker-compose --profile sse logs -f
+
+# Check signal-daemon health
+docker-compose --profile sse ps
+```
+
+---
+
 ## Transferring Setup Between Machines
 
 ### Option 1: Transfer Registered Account
