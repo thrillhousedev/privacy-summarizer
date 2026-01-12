@@ -801,14 +801,12 @@ def daemon(phone, config_dir, db_path, ollama_host, ollama_model, auto_accept_in
     ollama = OllamaClient(ollama_host, ollama_model)
     summarizer = ChatSummarizer(ollama)
 
-    # Initialize DM handler
-    dm_handler = DMHandler(ollama, signal_cli, db_repo)
-
-    # Initialize message collector with DM handler
-    message_collector = MessageCollector(signal_cli, db_repo, dm_handler=dm_handler)
+    # Initialize message collector (without DM handler initially)
+    message_collector = MessageCollector(signal_cli, db_repo, dm_handler=None)
 
     # Sync groups from Signal on startup
     # In SSE mode, use the SSE client to avoid conflict with signal-daemon
+    sse_client = None
     try:
         if use_sse:
             from ..signal.sse_client import SignalSSEClient
@@ -827,6 +825,33 @@ def daemon(phone, config_dir, db_path, ollama_host, ollama_model, auto_accept_in
         click.echo(f"✓ Synced {group_count} groups from Signal")
     except Exception as e:
         click.echo(f"⚠ Warning: Failed to sync groups: {e}")
+
+    # Initialize DM handler with appropriate signal client
+    # In SSE mode, create a wrapper that uses the SSE client for messaging
+    if use_sse and sse_client:
+        class SSESignalWrapper:
+            """Wrapper to make SSE client compatible with DMHandler's signal interface."""
+            def __init__(self, client):
+                self._client = client
+
+            def send_message(self, recipient: str = None, message: str = None, **kwargs):
+                """Send DM via SSE client."""
+                if recipient and message:
+                    return self._client.send_message(message, recipient=recipient)
+                return False
+
+            def send_reaction(self, emoji: str, target_author: str, target_timestamp: int,
+                            recipient: str = None, **kwargs):
+                """Send reaction via SSE client."""
+                return self._client.send_reaction(emoji, target_author, target_timestamp,
+                                                  recipient=recipient)
+
+        dm_signal_client = SSESignalWrapper(sse_client)
+    else:
+        dm_signal_client = signal_cli
+
+    dm_handler = DMHandler(ollama, dm_signal_client, db_repo)
+    message_collector.dm_handler = dm_handler
 
     summary_poster = SummaryPoster(signal_cli, summarizer, db_repo, message_collector)
 
@@ -1517,12 +1542,12 @@ Provide a clear, concise summary. Remember: no names, no quotes, use general ter
                 logger.debug("Skipping bot's own message")
                 return
 
-            # Handle DMs
+            # Handle DMs (use source_uuid since source_number is null in SSE mode)
             if not msg.group_id:
-                if msg.source_number:
-                    logger.info(f"Received DM from {msg.source_number[:6]}...")
+                if msg.source_uuid:
+                    logger.info(f"Received DM from {msg.source_uuid[:8]}...")
                     try:
-                        dm_handler.handle_dm(msg.source_number, msg.message, msg.timestamp)
+                        dm_handler.handle_dm(msg.source_uuid, msg.message, msg.timestamp)
                     except Exception as e:
                         logger.error(f"Error handling DM: {e}")
                 return
