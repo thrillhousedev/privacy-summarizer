@@ -1,0 +1,20 @@
+# SSE Streaming Mode Override
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.sse.yml up -d
+#
+# This enables SSE streaming mode for faster message handling:
+# - Latency: < 500ms (vs 0-5 seconds with subprocess polling)
+# - Lower CPU usage (persistent connection vs repeated subprocess calls)
+# - Instant emoji reactions
+
+services:
+  signal-daemon:
+    profiles: []  # Remove profile restriction, always start in SSE mode
+
+  privacy-summarizer:
+    environment:
+      - USE_SSE=true
+      - SIGNAL_DAEMON_HOST=signal-daemon
+      - SIGNAL_DAEMON_PORT=8080
+    depends_on:
+      signal-daemon:
+        condition: service_healthy

@@ -2,6 +2,7 @@
 
 import click
 import logging
+import os
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -784,7 +785,15 @@ def daemon(phone, config_dir, db_path, ollama_host, ollama_model, auto_accept_in
     import subprocess
     import json
 
-    click.echo("Starting Privacy Summarizer daemon (real-time mode)...")
+    # SSE streaming mode detection
+    use_sse = os.getenv("USE_SSE", "false").lower() in ("true", "1", "yes")
+    sse_host = os.getenv("SIGNAL_DAEMON_HOST", "signal-daemon")
+    sse_port = int(os.getenv("SIGNAL_DAEMON_PORT", "8080"))
+
+    if use_sse:
+        click.echo("Starting Privacy Summarizer daemon (SSE streaming mode)...")
+    else:
+        click.echo("Starting Privacy Summarizer daemon (subprocess polling mode)...")
 
     # Initialize components
     signal_cli = SignalCLI(phone, config_dir)
@@ -799,8 +808,22 @@ def daemon(phone, config_dir, db_path, ollama_host, ollama_model, auto_accept_in
     message_collector = MessageCollector(signal_cli, db_repo, dm_handler=dm_handler)
 
     # Sync groups from Signal on startup
+    # In SSE mode, use the SSE client to avoid conflict with signal-daemon
     try:
-        group_count = message_collector.sync_groups()
+        if use_sse:
+            from ..signal.sse_client import SignalSSEClient
+            sse_client = SignalSSEClient(phone, sse_host, sse_port)
+            groups = sse_client.list_groups()
+            group_count = 0
+            for group in groups:
+                group_id = group.get("id")
+                name = group.get("name", "Unknown Group")
+                description = group.get("description", "")
+                if group_id:
+                    db_repo.create_group(group_id=group_id, name=name, description=description)
+                    group_count += 1
+        else:
+            group_count = message_collector.sync_groups()
         click.echo(f"✓ Synced {group_count} groups from Signal")
     except Exception as e:
         click.echo(f"⚠ Warning: Failed to sync groups: {e}")
@@ -1436,10 +1459,428 @@ Provide a clear, concise summary. Remember: no names, no quotes, use general ter
             time_module.sleep(1)  # Brief pause between receive cycles
         logger.info("Real-time message loop stopped")
 
-    realtime_thread = threading.Thread(target=realtime_loop, daemon=True)
-    realtime_thread.start()
+    def sse_loop():
+        """Stream messages via SSE from signal-cli daemon (faster than polling)."""
+        nonlocal running
+        from ..signal.sse_client import SignalSSEClient
 
-    click.echo("✓ Real-time message handling enabled")
+        logger.info(f"SSE loop starting (connecting to {sse_host}:{sse_port})")
+
+        client = SignalSSEClient(
+            phone_number=phone,
+            host=sse_host,
+            port=sse_port
+        )
+
+        # Wait for daemon to be ready
+        import time as time_module
+        for attempt in range(30):
+            if not running:
+                return
+            if client.is_daemon_running():
+                logger.info("Connected to signal-daemon")
+                break
+            logger.info(f"Waiting for signal-daemon... (attempt {attempt + 1}/30)")
+            time_module.sleep(2)
+        else:
+            logger.error("Failed to connect to signal-daemon after 30 attempts")
+            return
+
+        # Track processed messages for deduplication (timestamp, sender_uuid, group_id)
+        processed_messages = set()
+        MAX_PROCESSED_CACHE = 1000
+
+        def handle_message(msg):
+            """Handle incoming SSE message."""
+            nonlocal processed_messages
+
+            # Skip if no message content
+            if not msg.message:
+                return
+
+            # Deduplicate using (timestamp, sender_uuid, group_id) tuple
+            dedup_key = (msg.timestamp, msg.source_uuid, msg.group_id)
+            if dedup_key in processed_messages:
+                logger.debug(f"Skipping duplicate message (timestamp={msg.timestamp})")
+                return
+            processed_messages.add(dedup_key)
+
+            # Clean up old messages (keep newest half when cache is full)
+            if len(processed_messages) > MAX_PROCESSED_CACHE:
+                # Sort by timestamp (first element of tuple)
+                sorted_msgs = sorted(processed_messages, key=lambda x: x[0])
+                processed_messages.clear()
+                processed_messages.update(sorted_msgs[MAX_PROCESSED_CACHE // 2:])
+
+            # Skip bot's own messages
+            if msg.source_number == phone:
+                logger.debug("Skipping bot's own message")
+                return
+
+            # Handle DMs
+            if not msg.group_id:
+                if msg.source_number:
+                    logger.info(f"Received DM from {msg.source_number[:6]}...")
+                    try:
+                        dm_handler.handle_dm(msg.source_number, msg.message, msg.timestamp)
+                    except Exception as e:
+                        logger.error(f"Error handling DM: {e}")
+                return
+
+            # Group message handling
+            logger.info(f"Received message in group {msg.group_id[:20]}...")
+
+            text_lower = msg.message.strip().lower()
+            is_command = text_lower.startswith('!')
+
+            # Store non-command messages
+            if msg.source_uuid and not is_command:
+                if db_repo.is_user_opted_out(msg.group_id, msg.source_uuid):
+                    logger.debug(f"Skipping message from opted-out user")
+                else:
+                    try:
+                        # Auto-update retention from Signal's disappearing messages
+                        settings = db_repo.get_group_settings(msg.group_id)
+                        if settings is None or settings.source == "signal":
+                            if msg.expires_in_seconds > 0:
+                                retention_hours = max(1, msg.expires_in_seconds // 3600)
+                            else:
+                                retention_hours = 48
+                            current = db_repo.get_group_retention_hours(msg.group_id)
+                            if retention_hours != current:
+                                db_repo.set_group_retention_hours(msg.group_id, retention_hours, source="signal")
+                                logger.info(f"Auto-set retention for {msg.group_id[:20]}... to {retention_hours}h")
+
+                        db_repo.store_message(
+                            signal_timestamp=msg.timestamp,
+                            sender_uuid=msg.source_uuid,
+                            group_id=msg.group_id,
+                            content=msg.message
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to store message: {e}")
+
+            # Process commands using SSE client for responses
+            if is_command:
+                # Create wrapper functions that use SSE client
+                def sse_send_message(group_id: str, message: str) -> bool:
+                    return client.send_message(message, group_id=group_id)
+
+                def sse_send_reaction(emoji: str, target_author: str, target_timestamp: int,
+                                      group_id: str = None, recipient: str = None) -> bool:
+                    return client.send_reaction(emoji, target_author, target_timestamp, group_id, recipient)
+
+                from contextlib import contextmanager
+
+                @contextmanager
+                def sse_command_reaction(target_author: str, target_timestamp: int,
+                                         group_id: str = None, recipient: str = None):
+                    sse_send_reaction("👀", target_author, target_timestamp, group_id, recipient)
+                    try:
+                        yield
+                        sse_send_reaction("✅", target_author, target_timestamp, group_id, recipient)
+                    except Exception:
+                        sse_send_reaction("❌", target_author, target_timestamp, group_id, recipient)
+                        raise
+
+                def sse_is_admin(group_id: str, source_uuid: str) -> bool:
+                    """Check if user is admin via SSE client."""
+                    try:
+                        groups = client.list_groups()
+                        for g in groups:
+                            if g.get('id') == group_id:
+                                for admin in g.get('admins', []):
+                                    if admin.get('uuid') == source_uuid:
+                                        return True
+                        return False
+                    except Exception as e:
+                        logger.warning(f"Failed to check admin status: {e}")
+                        return False
+
+                # Process commands (simplified - main commands)
+                message_text = msg.message
+                source_number = msg.source_number
+                source_uuid = msg.source_uuid
+                timestamp = msg.timestamp
+                group_id = msg.group_id
+
+                # Use UUID as fallback for reactions when phone number isn't available
+                target_author = source_number or source_uuid
+
+                if text_lower == "!help":
+                    with sse_command_reaction(target_author, timestamp, group_id=group_id):
+                        help_text = """📖 Privacy Summarizer Commands
+
+📋 !help - Show this help
+📊 !status - Show message count and retention
+📝 !summary [hours] [detail] - Generate summary
+📝 !summarize [text] - Summarize provided text
+🔍 !ask [question] - Ask about chat history
+🙈 !opt-out - Stop collecting your messages
+👁️ !opt-in - Resume message collection
+⏰ !retention - View/set retention period
+🗑️ !purge-mode - View/set purge after summary
+📅 !schedule - Manage scheduled summaries
+⚡ !power - View/set command permissions
+🗑️ !!!purge - Delete all stored messages
+
+📖 Docs: https://next.maidan.cloud/apps/collectives/p/SCXCe4p3RDexBZC/Privacy-Summarizer-Docs-4"""
+                        sse_send_message(group_id, help_text)
+                elif text_lower == "!status":
+                    with sse_command_reaction(target_author, timestamp, group_id=group_id):
+                        message_counts = db_repo.get_message_count_by_group()
+                        count = message_counts.get(group_id, 0)
+                        retention = db_repo.get_group_retention_hours(group_id)
+                        purge_on = db_repo.get_group_purge_on_summary(group_id)
+                        purge_mode = "on" if purge_on else "off"
+                        status_msg = f"""📊 Status
+
+✅ Service: Active
+💬 Messages: {count} stored
+⏰ Retention: {retention}h
+🗑️ Purge mode: {purge_mode}"""
+                        sse_send_message(group_id, status_msg)
+                elif text_lower == "!opt-out":
+                    with sse_command_reaction(target_author, timestamp, group_id=group_id):
+                        if source_uuid:
+                            db_repo.set_user_opt_out(group_id, source_uuid, opted_out=True)
+                            deleted = db_repo.delete_user_messages_in_group(group_id, source_uuid)
+                            if deleted > 0:
+                                sse_send_message(group_id, f"Opted out. {deleted} messages deleted.")
+                            else:
+                                sse_send_message(group_id, "Opted out. Your messages will no longer be stored.")
+                elif text_lower == "!opt-in":
+                    with sse_command_reaction(target_author, timestamp, group_id=group_id):
+                        if source_uuid:
+                            was_opted_out = db_repo.is_user_opted_out(group_id, source_uuid)
+                            db_repo.set_user_opt_out(group_id, source_uuid, opted_out=False)
+                            if was_opted_out:
+                                sse_send_message(group_id, "Opted in. Your messages will now be collected.")
+                            else:
+                                sse_send_message(group_id, "Already opted in.")
+                elif (text_lower == "!ask" or text_lower.startswith("!ask ")) and group_id:
+                    with sse_command_reaction(target_author, timestamp, group_id=group_id):
+                        # Extract question
+                        question = ""
+                        if len(message_text) > len("!ask"):
+                            question = message_text[len("!ask"):].strip()
+
+                        if not question:
+                            sse_send_message(group_id, "❓ Please provide a question.\n\nUsage: !ask <question>")
+                        elif not ollama.is_available():
+                            sse_send_message(group_id, "⚠️ AI service is currently offline.")
+                        else:
+                            # Get stored messages for this group
+                            messages_with_reactions = db_repo.get_messages_with_reactions_for_group(group_id)
+                            messages_with_reactions = list(reversed(messages_with_reactions))
+
+                            # Filter out commands
+                            messages_with_reactions = [
+                                m for m in messages_with_reactions
+                                if not m.get('content', '').startswith('!')
+                            ]
+
+                            if not messages_with_reactions:
+                                retention_hours = db_repo.get_group_retention_hours(group_id)
+                                sse_send_message(group_id, f"📭 No messages stored in the last {retention_hours} hours.")
+                            else:
+                                # Use ChatSummarizer for Q&A
+                                answer = summarizer.answer_question(question, messages_with_reactions)
+                                response = f"❓ {question}\n\n💬 {answer}"
+                                for chunk in split_long_message(response):
+                                    sse_send_message(group_id, chunk)
+                elif text_lower.startswith("!summary") and group_id:
+                    with sse_command_reaction(target_author, timestamp, group_id=group_id):
+                        # Parse hours and detail from command
+                        parts = message_text.strip().split()
+                        hours = db_repo.get_group_retention_hours(group_id)
+                        detail = False
+
+                        for part in parts[1:]:
+                            if part.lower() == 'detail':
+                                detail = True
+                            else:
+                                try:
+                                    hours = int(part)
+                                except ValueError:
+                                    pass
+
+                        summary = summarize_callback(group_id, hours, detail=detail)
+                        for chunk in split_long_message(summary):
+                            sse_send_message(group_id, chunk)
+
+                        # Purge messages after summary if purge mode is on
+                        if db_repo.get_group_purge_on_summary(group_id):
+                            db_repo.purge_all_messages_for_group(group_id)
+                elif text_lower.startswith("!summarize") and group_id:
+                    with sse_command_reaction(target_author, timestamp, group_id=group_id):
+                        text_to_summarize = message_text[len("!summarize"):].strip()
+
+                        if not text_to_summarize or len(text_to_summarize) < 20:
+                            sse_send_message(group_id, "Please provide text to summarize after the !summarize command.")
+                        elif not ollama.is_available():
+                            sse_send_message(group_id, "⚠️ AI service is currently offline.")
+                        else:
+                            messages = [
+                                {"role": "system", "content": ChatSummarizer.PRIVACY_SYSTEM_PROMPT},
+                                {"role": "user", "content": f"""Summarize the following text concisely.
+
+<text>
+{text_to_summarize}
+</text>
+
+Provide a clear, concise summary. Remember: no names, no quotes, use general terms."""}
+                            ]
+                            summary = ollama.chat(messages=messages, temperature=0.3, max_tokens=300)
+                            response = f"📝 Summary:\n\n{summary.strip()}"
+                            for chunk in split_long_message(response):
+                                sse_send_message(group_id, chunk)
+                elif text_lower.startswith("!retention") and group_id:
+                    with sse_command_reaction(target_author, timestamp, group_id=group_id):
+                        parts = message_text.strip().split()
+                        if len(parts) == 1:
+                            hours = db_repo.get_group_retention_hours(group_id)
+                            settings = db_repo.get_group_settings(group_id)
+                            if settings and settings.source == "signal":
+                                mode = "auto"
+                            elif settings and settings.source == "command":
+                                mode = "fixed"
+                            else:
+                                mode = "default"
+                            sse_send_message(group_id, f"⏰ Retention: {hours}h ({mode})\nSet: !retention [hours] or !retention auto")
+                        else:
+                            # Check admin permission via SSE client
+                            power_mode = db_repo.get_group_power_mode(group_id)
+                            if power_mode == "admins" and not sse_is_admin(group_id, source_uuid):
+                                sse_send_message(group_id, "🔒 This command is admin-only.")
+                                return
+
+                            if parts[1].lower() in ("signal", "auto"):
+                                current_hours = db_repo.get_group_retention_hours(group_id)
+                                db_repo.set_group_retention_hours(group_id, current_hours, source="signal")
+                                sse_send_message(group_id, f"✅ Auto mode: {current_hours}h\nSyncs with Signal's disappearing messages")
+                            else:
+                                try:
+                                    hours = int(parts[1])
+                                    if not 1 <= hours <= 168:
+                                        raise ValueError()
+                                    db_repo.set_group_retention_hours(group_id, hours, source="command")
+                                    sse_send_message(group_id, f"✅ Fixed: {hours}h\nWon't change with Signal settings")
+                                except ValueError:
+                                    sse_send_message(group_id, "❌ Use 1-168 hours or 'auto'")
+                elif text_lower.startswith("!purge-mode") and group_id:
+                    with sse_command_reaction(target_author, timestamp, group_id=group_id):
+                        parts = message_text.strip().split()
+                        if len(parts) == 1:
+                            purge_on = db_repo.get_group_purge_on_summary(group_id)
+                            if purge_on:
+                                sse_send_message(group_id, "🗑️ Purge Mode: ON\n\nMessages are deleted immediately after !summary.")
+                            else:
+                                sse_send_message(group_id, "🗑️ Purge Mode: OFF\n\nMessages are kept until retention period expires.")
+                        else:
+                            # Check admin permission
+                            power_mode = db_repo.get_group_power_mode(group_id)
+                            if power_mode == "admins" and not sse_is_admin(group_id, source_uuid):
+                                sse_send_message(group_id, "🔒 This command is admin-only.")
+                                return
+
+                            arg = parts[1].lower()
+                            if arg == "on":
+                                db_repo.set_group_purge_on_summary(group_id, True)
+                                sse_send_message(group_id, "🗑️ Purge Mode: ON\n\nMessages will be deleted immediately after !summary.")
+                            elif arg == "off":
+                                db_repo.set_group_purge_on_summary(group_id, False)
+                                sse_send_message(group_id, "🗑️ Purge Mode: OFF\n\nMessages will be kept until retention period expires.")
+                            else:
+                                sse_send_message(group_id, "Usage: !purge-mode [on|off]")
+                elif text_lower.startswith("!power") and group_id:
+                    with sse_command_reaction(target_author, timestamp, group_id=group_id):
+                        parts = message_text.strip().split()
+                        is_admin = sse_is_admin(group_id, source_uuid)
+
+                        if len(parts) == 1:
+                            current = db_repo.get_group_power_mode(group_id)
+                            if current == "admins":
+                                sse_send_message(group_id, "⚡ Power Level: ADMINS ONLY\n\nOnly room admins can change settings.")
+                            else:
+                                sse_send_message(group_id, "⚡ Power Level: EVERYONE\n\nAll room members can change settings.")
+                        elif not is_admin:
+                            sse_send_message(group_id, "🔒 Nice try! Only admins can change power levels.")
+                        elif parts[1].lower() == "admins":
+                            db_repo.set_group_power_mode(group_id, "admins")
+                            sse_send_message(group_id, "⚡ Power Level: ADMINS ONLY\n\n🏰 The castle gates are locked!")
+                        elif parts[1].lower() == "everyone":
+                            db_repo.set_group_power_mode(group_id, "everyone")
+                            sse_send_message(group_id, "⚡ Power Level: EVERYONE\n\n🎉 Power to the people!")
+                        else:
+                            sse_send_message(group_id, "Usage: !power [admins|everyone]")
+                elif text_lower == "!!!purge" and group_id:
+                    with sse_command_reaction(target_author, timestamp, group_id=group_id):
+                        # Check admin permission
+                        power_mode = db_repo.get_group_power_mode(group_id)
+                        if power_mode == "admins" and not sse_is_admin(group_id, source_uuid):
+                            sse_send_message(group_id, "🔒 This command is admin-only.")
+                            return
+                        count = db_repo.purge_all_messages_for_group(group_id)
+                        sse_send_message(group_id, f"✅ Purged {count} stored messages.")
+                elif text_lower.startswith("!schedule") and group_id:
+                    with sse_command_reaction(target_author, timestamp, group_id=group_id):
+                        # Check admin permission for write operations
+                        parts = message_text.strip().split()
+                        power_mode = db_repo.get_group_power_mode(group_id)
+                        is_admin = sse_is_admin(group_id, source_uuid)
+
+                        if len(parts) == 1:
+                            # List schedules for this group (anyone can view)
+                            schedules = db_repo.get_schedules_for_source_group(group_id)
+                            if not schedules:
+                                sse_send_message(group_id, "📅 No schedules configured for this group.\n\nUse !schedule add to create one.")
+                            else:
+                                lines = ["📅 Schedules for this group:\n"]
+                                for s in schedules:
+                                    status = "✅" if s.enabled else "❌"
+                                    times = ", ".join(s.schedule_times)
+                                    lines.append(f"{status} {s.name}: {times} ({s.timezone})")
+                                sse_send_message(group_id, "\n".join(lines))
+                        elif parts[1].lower() == "add":
+                            if power_mode == "admins" and not is_admin:
+                                sse_send_message(group_id, "🔒 This command is admin-only.")
+                            else:
+                                sse_send_message(group_id, "📅 Schedule creation via !schedule add is complex.\nPlease use the web UI or CLI for now.")
+                        elif parts[1].lower() in ("remove", "enable", "disable"):
+                            if power_mode == "admins" and not is_admin:
+                                sse_send_message(group_id, "🔒 This command is admin-only.")
+                            else:
+                                sse_send_message(group_id, f"📅 Use web UI or CLI for !schedule {parts[1]}.")
+                        else:
+                            sse_send_message(group_id, "Usage: !schedule [add|remove|enable|disable]")
+                elif text_lower.startswith("!"):
+                    # Unknown command - show helpful suggestion
+                    sse_send_reaction("❓", target_author, timestamp, group_id=group_id)
+                    _handle_unknown_command(message_text, group_id, sse_send_message, ollama)
+
+        # Start streaming with handler
+        client.add_handler(handle_message)
+        client.start_streaming()
+
+        # Keep running while daemon is active
+        import time as time_module
+        while running:
+            time_module.sleep(1)
+
+        client.stop_streaming()
+        logger.info("SSE loop stopped")
+
+    # Select mode and start appropriate thread
+    if use_sse:
+        message_thread = threading.Thread(target=sse_loop, daemon=True)
+        message_thread.start()
+        click.echo(f"✓ SSE streaming enabled (connected to {sse_host}:{sse_port})")
+    else:
+        message_thread = threading.Thread(target=realtime_loop, daemon=True)
+        message_thread.start()
+        click.echo("✓ Subprocess polling enabled")
+
     click.echo("✓ Commands enabled: !help, !summary, !summarize, !ask, !status, !opt-out, !opt-in, !retention, !purge-mode, !schedule, !power, !!!purge")
     if auto_accept_invites:
         click.echo("✓ Auto-accept group invites enabled")

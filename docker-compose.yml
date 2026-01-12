@@ -1,6 +1,34 @@
 services:
+  # Signal-CLI daemon for SSE streaming mode (optional)
+  # Provides real-time message reception via SSE with lower latency than polling
+  signal-daemon:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: Dockerfile.signal-daemon
+    container_name: signal-daemon
+    restart: unless-stopped
+    profiles:
+      - sse
+    volumes:
+      - ./signal-cli-config:/signal-cli-config
+    env_file:
+      - .env
+    command: >
+      signal-cli -a ${SIGNAL_PHONE_NUMBER}
+      --config /signal-cli-config
+      daemon --http 0.0.0.0:8080 --receive-mode=on-connection
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/api/v1/rpc", "-X", "POST", "-H", "Content-Type: application/json", "-d", "{\"jsonrpc\":\"2.0\",\"method\":\"version\",\"id\":1}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    expose:
+      - "8080"
+
   # Main service - handles real-time messages and scheduled summaries
-  # Uses signal-cli directly (no separate daemon needed)
+  # Uses signal-cli directly (no separate daemon needed) unless USE_SSE=true
   privacy-summarizer:
     platform: linux/amd64
     build:

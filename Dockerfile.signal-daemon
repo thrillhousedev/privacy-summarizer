@@ -1,0 +1,16 @@
+# Lightweight signal-cli daemon for SSE streaming
+FROM debian:trixie-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    wget curl ca-certificates && rm -rf /var/lib/apt/lists/*
+
+ARG SIGNAL_CLI_VERSION=0.13.21
+RUN wget -q https://github.com/AsamK/signal-cli/releases/download/v${SIGNAL_CLI_VERSION}/signal-cli-${SIGNAL_CLI_VERSION}-Linux-native.tar.gz \
+    && tar xf signal-cli-${SIGNAL_CLI_VERSION}-Linux-native.tar.gz -C /opt \
+    && chmod +x /opt/signal-cli \
+    && ln -sf /opt/signal-cli /usr/local/bin/signal-cli \
+    && rm signal-cli-${SIGNAL_CLI_VERSION}-Linux-native.tar.gz
+
+RUN useradd -m -u 1000 signal && mkdir -p /signal-cli-config && chown -R signal:signal /signal-cli-config
+USER signal
+EXPOSE 8080
